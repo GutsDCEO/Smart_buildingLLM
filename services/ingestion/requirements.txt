@@ -1,0 +1,14 @@
+# ============================================================
+# Ingestion Service — Python Dependencies
+# ============================================================
+# Pinned to minimum compatible versions for reproducibility.
+# Run: pip install -r requirements.txt
+# ============================================================
+
+fastapi>=0.115.0
+uvicorn>=0.34.0
+PyMuPDF>=1.25.0
+python-docx>=1.1.0
+tiktoken>=0.9.0
+pydantic-settings>=2.7.0
+python-multipart>=0.0.20
