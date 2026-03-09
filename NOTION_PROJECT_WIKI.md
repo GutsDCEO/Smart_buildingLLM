@@ -184,6 +184,109 @@ User sends question via Chat UI
 | **Runs in** | n8n workflow (triggered when files are dropped in `/data/documents/`) |
 | **MVP Scope** | PDF + DOCX only |
 
+#### 🧠 Technical Deep-Dive: Ingestion Service
+
+**Folder structure:**
+```
+services/ingestion/
+├── main.py              # FastAPI controller (thin layer only)
+├── config.py            # Settings via env vars (no hardcoded values)
+├── models.py            # Pydantic DTOs (ParsedPage, TextChunk, IngestResponse)
+├── chunker.py           # Token-based splitting (tiktoken cl100k_base)
+└── parsers/
+    ├── base_parser.py   # Abstract base class — all parsers extend this (OCP)
+    ├── pdf_parser.py    # PyMuPDF page-by-page text extraction
+    ├── docx_parser.py   # python-docx paragraph extraction
+    └── __init__.py      # Parser registry — auto-maps extension → parser
+```
+
+**Why the Abstract Parser Pattern?** (SOLID: OCP + DIP)
+```python
+# base_parser.py — the contract every parser must follow
+class BaseParser(ABC):
+    @property
+    @abstractmethod
+    def supported_extensions(self) -> tuple[str, ...]:
+        ...
+
+    @abstractmethod
+    def parse(self, file_path: Path) -> list[ParsedPage]:
+        ...
+
+# To add HTML support tomorrow:
+# 1. Create parsers/html_parser.py that extends BaseParser
+# 2. Register it in __init__.py
+# 3. ZERO changes to main.py, chunker.py, or any existing code
+```
+
+**How the Chunker works (500 tokens + 50 overlap):**
+```python
+# chunker.py — core logic
+# 1. Split text into sentences using regex
+# 2. Accumulate sentences until token limit (500) is reached
+# 3. Emit a chunk, then REWIND 50 tokens (the overlap)
+# 4. Repeat — ensures context doesn't get cut at chunk boundaries
+
+# Why tiktoken instead of len()?
+# len("Hello world") = 11 characters
+# tiktoken.encode("Hello world") = 2 tokens
+# LLMs think in TOKENS, not characters. Using tiktoken keeps
+# chunk size aligned with what the embedding model actually sees.
+```
+
+**What the API returns:**
+```json
+{
+  "source_file": "HVAC_Manual_2024.pdf",
+  "total_pages": 4,
+  "total_chunks": 12,
+  "chunks": [
+    {
+      "text": "The HVAC unit in Building A...",
+      "chunk_index": 0,
+      "token_count": 487,
+      "source_file": "HVAC_Manual_2024.pdf",
+      "page_number": 1,
+      "start_char": 0,
+      "end_char": 1843
+    }
+  ]
+}
+```
+
+#### 🧪 Manual Testing: Ingestion Service (Step-by-Step)
+
+**Step 1: Install dependencies**
+```powershell
+cd services/ingestion
+pip install -r requirements.txt
+```
+
+**Step 2: Start the API**
+```powershell
+uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+```
+
+**Step 3: Open Swagger UI in browser**
+```
+http://localhost:8001/docs
+```
+
+**Step 4: Test `/formats`** → Should return `[".pdf", ".docx"]`
+
+**Step 5: Test `/ingest`**
+1. Click `POST /ingest` → `Try it out`
+2. Click `Choose File` → select any PDF or DOCX
+3. Click `Execute`
+4. **What to verify in the response:**
+   - `total_chunks` > 0
+   - Each chunk's `token_count` ≤ 500
+   - Chunk `0` text and Chunk `1` text share a few overlapping sentences
+
+**Step 6: Test error handling**
+- Upload a `.txt` file → expect `400 Bad Request: No parser registered for '.txt'`
+
+
 ### 🔢 Agent 2: Embedding Agent
 
 | Aspect | Detail |
@@ -192,6 +295,115 @@ User sends question via Chat UI
 | **Model** | `sentence-transformers/all-MiniLM-L6-v2` (local, free, CPU-friendly) |
 | **Output** | Vectors stored in Qdrant + metadata logged in PostgreSQL |
 | **Runs in** | n8n workflow (chained after Ingestion Agent) |
+
+#### 🧠 Technical Deep-Dive: Embedding Service
+
+**Folder structure:**
+```
+services/embedding/
+├── main.py           # FastAPI controller + lifespan model loader
+├── config.py         # Env-based settings (model name, Qdrant URL, Postgres DSN)
+├── models.py         # DTOs (EmbedRequest, EmbedResponse, ChunkInput)
+├── embedder.py       # Singleton sentence-transformers wrapper
+├── qdrant_store.py   # Qdrant collection auto-creation + UUID upserts
+└── db.py             # Async PostgreSQL audit logger (graceful degradation)
+```
+
+**Why the Singleton Pattern for the model?**
+```python
+# embedder.py
+class Embedder:
+    def __init__(self):
+        self._model = None   # Not loaded yet
+
+    def load_model(self):
+        # Called ONCE at startup via FastAPI lifespan event
+        self._model = SentenceTransformer(settings.embedding_model_name)
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        # Already in RAM — this is millisecond-fast
+        return [vec.tolist() for vec in self._model.encode(texts)]
+
+# Why? Loading sentence-transformers takes ~2-5 seconds.
+# Without Singleton: every API call reloads it = unusable in production.
+# With Singleton: load once at startup, instant for all subsequent calls.
+```
+
+**Graceful Degradation in the DB logger:**
+```python
+# db.py
+async def log_ingestion(source_file, chunk_count, vector_ids):
+    if _pool is None:
+        # Postgres is down — LOG A WARNING but DO NOT crash
+        logger.warning("Skipping metadata log — PostgreSQL not connected.")
+        return  # The embedding pipeline continues normally
+
+    # If Postgres IS available, write the audit row
+    await conn.execute("INSERT INTO ingestion_log ...")
+
+# Why? Qdrant (vectors) is critical. Postgres (audit log) is optional.
+# We never let a logging dependency break the core AI pipeline.
+```
+
+**What the API returns:**
+```json
+{
+  "source_file": "HVAC_Manual_2024.pdf",
+  "chunks_stored": 12,
+  "stored_chunks": [
+    {
+      "chunk_index": 0,
+      "vector_id": "3f7c2a0e-8b1d-4e9f-a2c3-1d5e6f7a8b9c",
+      "source_file": "HVAC_Manual_2024.pdf"
+    }
+  ],
+  "embedded_at": "2026-03-08T17:30:00Z"
+}
+```
+
+#### 🧪 Manual Testing: Embedding Service (Step-by-Step)
+
+**Pre-requisite:** Qdrant must be running.
+```powershell
+docker-compose up -d qdrant
+```
+
+**Step 1: Install dependencies**
+```powershell
+cd services/embedding
+pip install -r requirements.txt
+```
+
+**Step 2: Start the API**
+```powershell
+uvicorn main:app --host 0.0.0.0 --port 8002 --reload
+```
+> The model (`all-MiniLM-L6-v2`, ~90MB) downloads automatically on first run.
+
+**Step 3: Test `/health`** at `http://localhost:8002/docs`
+- Should return `{ "status": "healthy", "model_loaded": true }`
+- If `model_loaded` is `false`, the startup lifespan failed — check the terminal log.
+
+**Step 4: Test the full pipeline (Ingestion → Embedding)**
+1. Open Ingestion Swagger: `http://localhost:8001/docs`
+2. Run `POST /ingest` with a PDF → copy the `chunks` array from the response
+3. Open Embedding Swagger: `http://localhost:8002/docs`
+4. Run `POST /embed` with body:
+   ```json
+   { "chunks": [ ... paste chunks here ... ] }
+   ```
+5. **What to verify in the response:**
+   - `chunks_stored` matches `total_chunks` from step 2
+   - Every item in `stored_chunks` has a valid UUID `vector_id`
+
+**Step 5: Verify in Qdrant Dashboard**
+```
+http://localhost:6333/dashboard
+```
+- Check collection `smart_building_docs` exists
+- Point count should equal `chunks_stored`
+- Click a point to inspect its payload — it should contain `text`, `source_file`, `page_number`
+
 
 ### 🚦 Agent 3: Router Agent
 

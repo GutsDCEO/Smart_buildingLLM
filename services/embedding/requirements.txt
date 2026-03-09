@@ -1,0 +1,13 @@
+# ============================================================
+# Embedding Service — Python Dependencies
+# ============================================================
+# Pinned to minimum compatible versions for reproducibility.
+# Run: pip install -r requirements.txt
+# ============================================================
+
+fastapi>=0.115.0
+uvicorn>=0.34.0
+sentence-transformers>=3.4.0
+qdrant-client>=1.14.0
+asyncpg>=0.31.0
+pydantic-settings>=2.7.0
