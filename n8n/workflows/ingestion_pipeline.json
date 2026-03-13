@@ -1,0 +1,218 @@
+{
+    "name": "Smart Building — Document Ingestion Pipeline",
+    "nodes": [
+        {
+            "parameters": {},
+            "id": "node-manual-trigger",
+            "name": "Manual Trigger",
+            "type": "n8n-nodes-base.manualTrigger",
+            "typeVersion": 1,
+            "position": [
+                240,
+                300
+            ]
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "var-file-path",
+                            "name": "file_path",
+                            "value": "/data/ingest/ERP.pdf",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "node-set-file-path",
+            "name": "Set File Path",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [
+                460,
+                300
+            ],
+            "notes": "Set the path to a file that has been placed in the data/ingest/ folder of the project. The path is relative to the n8n container (/data = ./data on the host)."
+        },
+        {
+            "parameters": {
+                "filePath": "={{ $json.file_path }}"
+            },
+            "id": "node-read-binary-file",
+            "name": "Read Binary File",
+            "type": "n8n-nodes-base.readBinaryFile",
+            "typeVersion": 1,
+            "position": [
+                680,
+                300
+            ],
+            "notes": "Reads the file from the mounted /data volume and produces a binary 'data' object that the POST /ingest node can send as multipart/form-data."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://ingestion:8001/ingest",
+                "sendBody": true,
+                "contentType": "multipart-form-data",
+                "bodyParameters": {
+                    "parameters": [
+                        {
+                            "parameterType": "formBinaryData",
+                            "name": "file",
+                            "inputDataFieldName": "data"
+                        }
+                    ]
+                },
+                "options": {
+                    "timeout": 60000,
+                    "response": {
+                        "response": {
+                            "fullResponse": false
+                        }
+                    }
+                }
+            },
+            "id": "node-http-ingest",
+            "name": "POST /ingest",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                900,
+                300
+            ],
+            "notes": "Calls our Ingestion Service by Docker internal hostname. Returns text chunks."
+        },
+        {
+            "parameters": {
+                "jsCode": "// Reshape the Ingestion Service response for the Embedding Service.\n// Input:  { source_file, total_chunks, chunks: [...] }\n// Output: { chunks: [...] }\n\nconst ingestResponse = $input.first().json;\n\nif (!ingestResponse.chunks || ingestResponse.chunks.length === 0) {\n  throw new Error(`No chunks were produced from ${ingestResponse.source_file}`);\n}\n\nconsole.log(`[IngestionPipeline] Received ${ingestResponse.total_chunks} chunks from ${ingestResponse.source_file}`);\n\n// Pass the full chunks array wrapped in the EmbedRequest shape\nreturn [{\n  json: {\n    chunks: ingestResponse.chunks\n  }\n}];"
+            },
+            "id": "node-reshape-chunks",
+            "name": "Reshape Chunks",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1120,
+                300
+            ],
+            "notes": "Extracts the 'chunks' array and wraps it in the shape expected by the Embedding Service DTO."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://embedding:8002/embed",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify($json) }}",
+                "options": {
+                    "timeout": 120000,
+                    "response": {
+                        "response": {
+                            "fullResponse": false
+                        }
+                    }
+                }
+            },
+            "id": "node-http-embed",
+            "name": "POST /embed",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [
+                1340,
+                300
+            ],
+            "notes": "Calls our Embedding Service. It generates vectors and stores them in Qdrant + logs to Postgres."
+        },
+        {
+            "parameters": {
+                "jsCode": "// Build a human-readable summary of the pipeline run.\nconst embedResponse = $input.first().json;\n\nconst summary = {\n  status: 'SUCCESS',\n  source_file: embedResponse.source_file,\n  chunks_stored: embedResponse.chunks_stored,\n  embedded_at: embedResponse.embedded_at,\n  sample_vector_ids: (embedResponse.stored_chunks || []).slice(0, 3).map(c => c.vector_id)\n};\n\nconsole.log('[IngestionPipeline] Complete:', JSON.stringify(summary, null, 2));\n\nreturn [{ json: summary }];"
+            },
+            "id": "node-build-summary",
+            "name": "Build Summary",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [
+                1560,
+                300
+            ],
+            "notes": "Formats the final output for easy reading in the n8n execution log."
+        }
+    ],
+    "connections": {
+        "Manual Trigger": {
+            "main": [
+                [
+                    {
+                        "node": "Set File Path",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Set File Path": {
+            "main": [
+                [
+                    {
+                        "node": "Read Binary File",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Read Binary File": {
+            "main": [
+                [
+                    {
+                        "node": "POST /ingest",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "POST /ingest": {
+            "main": [
+                [
+                    {
+                        "node": "Reshape Chunks",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "Reshape Chunks": {
+            "main": [
+                [
+                    {
+                        "node": "POST /embed",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        },
+        "POST /embed": {
+            "main": [
+                [
+                    {
+                        "node": "Build Summary",
+                        "type": "main",
+                        "index": 0
+                    }
+                ]
+            ]
+        }
+    },
+    "active": false,
+    "settings": {
+        "executionOrder": "v1"
+    },
+    "meta": {
+        "instanceId": "smart-building-llm-v1"
+    }
+}

@@ -1,8 +1,8 @@
 # ============================================================
 # Ingestion Service — Dockerfile
 # ============================================================
-# Multi-stage not needed yet (simple service).
-# Uses non-root user for security (OWASP A04).
+# Uses BuildKit cache mounts for pip (resumable builds).
+# OWASP A04: non-root user.
 # ============================================================
 
 FROM python:3.12-slim
@@ -18,9 +18,13 @@ RUN groupadd --system appgroup && \
 # Set working directory
 WORKDIR /app
 
-# Install dependencies first (layer caching)
+# Install dependencies with BuildKit cache mount.
+# The pip cache at /root/.cache/pip persists across builds
+# inside Docker's Linux layer, making builds resumable.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN --mount=type=cache,target=/root/.cache/pip \
+    pip install --upgrade pip && \
+    pip install -r requirements.txt
 
 # Copy application code
 COPY . .

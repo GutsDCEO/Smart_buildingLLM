@@ -162,7 +162,21 @@ Thumbs.db
 
 # Project Specific
 data/
-*/data/
+**/data/
 n8n/nodes/
 n8n/config/
 *.log
+**/wheels/
+
+# AI/ML Specific
+.cache/
+.huggingface/
+tokenizers/
+models/
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# Infrastructure Overrides
+docker-compose.override.yml

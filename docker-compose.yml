@@ -21,15 +21,14 @@ services:
       - "${QDRANT_GRPC_PORT:-6334}:6334"
     volumes:
       - qdrant_data:/qdrant/storage
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:6333/healthz || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+    networks:
+      - sb_network
+    # Healthcheck removed: Qdrant image is minimal (no curl/wget)
 
-  # ──────────────────────────────────────────────────────────
-  # Metadata Database — PostgreSQL
-  # ──────────────────────────────────────────────────────────
+
+    # ──────────────────────────────────────────────────────────
+    # Metadata Database — PostgreSQL
+    # ──────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: sb_postgres
@@ -42,11 +41,72 @@ services:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - sb_network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartbuilding}"]
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-smartbuilding}" ]
       interval: 15s
       timeout: 5s
       retries: 5
+
+  # ──────────────────────────────────────────────────────────
+  # Ingestion Service — Text Extraction & Chunking
+  # ──────────────────────────────────────────────────────────
+  ingestion:
+    build:
+      context: ./services/ingestion
+      dockerfile: Dockerfile
+    container_name: sb_ingestion
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - CHUNK_SIZE_TOKENS=${CHUNK_SIZE_TOKENS:-500}
+      - CHUNK_OVERLAP_TOKENS=${CHUNK_OVERLAP_TOKENS:-50}
+    ports:
+      - "${INGESTION_SERVICE_PORT:-8001}:8001"
+    networks:
+      - sb_network
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ──────────────────────────────────────────────────────────
+  # Embedding Service — Vector Generation & Storage
+  # ──────────────────────────────────────────────────────────
+  embedding:
+    build:
+      context: ./services/embedding
+      dockerfile: Dockerfile
+    container_name: sb_embedding
+    restart: unless-stopped
+    environment:
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - EMBEDDING_MODEL_NAME=${EMBEDDING_MODEL_NAME:-sentence-transformers/all-MiniLM-L6-v2}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-smart_building_docs}
+      - QDRANT_VECTOR_SIZE=384
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_USER=${POSTGRES_USER:-smartbuilding}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      - POSTGRES_DB=${POSTGRES_DB:-smartbuilding_metadata}
+    ports:
+      - "${EMBEDDING_SERVICE_PORT:-8002}:8002"
+    networks:
+      - sb_network
+    depends_on:
+      qdrant:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # ──────────────────────────────────────────────────────────
   # Workflow Orchestration — n8n
@@ -60,6 +120,7 @@ services:
       - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
       - N8N_BASIC_AUTH_PASSWORD=${N8N_BASIC_AUTH_PASSWORD:?Set N8N_BASIC_AUTH_PASSWORD in .env}
       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY:?Set N8N_ENCRYPTION_KEY in .env}
+      - N8N_RESTRICT_FILE_ACCESS_TO=/data;/home/node/.n8n-files
       - DB_TYPE=postgresdb
       - DB_POSTGRESDB_HOST=postgres
       - DB_POSTGRESDB_PORT=5432
@@ -70,8 +131,15 @@ services:
       - "${N8N_PORT:-5678}:5678"
     volumes:
       - n8n_data:/home/node/.n8n
+      - ./data:/data:ro # data volume: readable at /data inside n8n container
+    networks:
+      - sb_network
     depends_on:
       postgres:
+        condition: service_healthy
+      ingestion:
+        condition: service_healthy
+      embedding:
         condition: service_healthy
 
   # ──────────────────────────────────────────────────────────
@@ -85,6 +153,8 @@ services:
       - "11434:11434"
     volumes:
       - ollama_data:/root/.ollama
+    networks:
+      - sb_network
     # On Mac: Apple Silicon GPU is auto-detected.
     # On Windows/Linux with NVIDIA: uncomment the deploy block below.
     # deploy:
@@ -95,9 +165,9 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
-# ──────────────────────────────────────────────────────────
-# Named Volumes — Persistent Storage
-# ──────────────────────────────────────────────────────────
+    # ──────────────────────────────────────────────────────────
+    # Named Volumes — Persistent Storage
+    # ──────────────────────────────────────────────────────────
 volumes:
   qdrant_data:
     driver: local
@@ -107,3 +177,10 @@ volumes:
     driver: local
   ollama_data:
     driver: local
+
+# ──────────────────────────────────────────────────────────
+# Shared Network — All services communicate by container name
+# ──────────────────────────────────────────────────────────
+networks:
+  sb_network:
+    driver: bridge
