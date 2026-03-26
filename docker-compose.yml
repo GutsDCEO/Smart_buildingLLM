@@ -141,6 +141,46 @@ services:
         condition: service_healthy
       embedding:
         condition: service_healthy
+      agents:
+        condition: service_healthy
+
+  # ──────────────────────────────────────────────────────────
+  # Agents Service — Guardrail + Router + Q&A
+  # ──────────────────────────────────────────────────────────
+  agents:
+    build:
+      context: ./services/agents
+      dockerfile: Dockerfile
+    container_name: sb_agents
+    restart: unless-stopped
+    environment:
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
+      - QDRANT_HOST=qdrant
+      - QDRANT_PORT=6333
+      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-smart_building_docs}
+      - EMBEDDING_SERVICE_URL=http://embedding:8002
+      - TOP_K_RESULTS=${TOP_K_RESULTS:-5}
+      - MAX_QUERY_LENGTH=2000
+      - MIN_QUERY_LENGTH=3
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+    ports:
+      - "${AGENTS_SERVICE_PORT:-8003}:8003"
+    networks:
+      - sb_network
+    depends_on:
+      qdrant:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
 
   # ──────────────────────────────────────────────────────────
   # Local LLM Engine — Ollama

@@ -1,0 +1,245 @@
+{
+    "id": "1",
+    "name": "Smart Building — Query Orchestration Pipeline",
+    "nodes": [
+        {
+            "parameters": {
+                "httpMethod": "POST",
+                "path": "query",
+                "responseMode": "lastNode",
+                "options": {}
+            },
+            "id": "node-webhook-trigger",
+            "name": "Webhook — Receive Question",
+            "type": "n8n-nodes-base.webhook",
+            "typeVersion": 2,
+            "position": [240, 300],
+            "notes": "Receives POST { question: '...' } from the Chat UI. Returns the final answer as the HTTP response."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://agents:8003/guard",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ question: $json.body.question }) }}",
+                "options": { "timeout": 10000 }
+            },
+            "id": "node-guard",
+            "name": "POST /guard",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [460, 300],
+            "notes": "Validates input for injection attacks, length, and abuse patterns."
+        },
+        {
+            "parameters": {
+                "conditions": {
+                    "options": { "caseSensitive": true },
+                    "conditions": [
+                        {
+                            "id": "cond-allowed",
+                            "leftValue": "={{ $json.allowed }}",
+                            "rightValue": true,
+                            "operator": { "type": "boolean", "operation": "equals" }
+                        }
+                    ]
+                }
+            },
+            "id": "node-if-allowed",
+            "name": "IF — Guard Passed?",
+            "type": "n8n-nodes-base.if",
+            "typeVersion": 2,
+            "position": [680, 300],
+            "notes": "Branches: true → continue to router. false → return rejection message."
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "assign-blocked-message",
+                            "name": "answer",
+                            "value": "={{ 'Your question was blocked: ' + $('POST /guard').item.json.reason }}",
+                            "type": "string"
+                        },
+                        {
+                            "id": "assign-blocked-citations",
+                            "name": "citations",
+                            "value": "=[]",
+                            "type": "array"
+                        },
+                        {
+                            "id": "assign-blocked-intent",
+                            "name": "intent",
+                            "value": "blocked",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "node-set-blocked",
+            "name": "Set — Blocked Response",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [900, 500],
+            "notes": "Builds a user-friendly rejection message when the guardrail blocks the input."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://agents:8003/route",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ question: $('POST /guard').item.json.sanitized_question }) }}",
+                "options": { "timeout": 30000 }
+            },
+            "id": "node-route",
+            "name": "POST /route",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [900, 300],
+            "notes": "Classifies intent via LLM: factual_qa or out_of_scope."
+        },
+        {
+            "parameters": {
+                "rules": {
+                    "rules": [
+                        {
+                            "conditions": {
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $json.intent }}",
+                                        "rightValue": "factual_qa",
+                                        "operator": { "type": "string", "operation": "equals" }
+                                    }
+                                ]
+                            },
+                            "renameOutput": true,
+                            "outputKey": "factual_qa"
+                        },
+                        {
+                            "conditions": {
+                                "conditions": [
+                                    {
+                                        "leftValue": "={{ $json.intent }}",
+                                        "rightValue": "out_of_scope",
+                                        "operator": { "type": "string", "operation": "equals" }
+                                    }
+                                ]
+                            },
+                            "renameOutput": true,
+                            "outputKey": "out_of_scope"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "node-switch-intent",
+            "name": "Switch — Intent",
+            "type": "n8n-nodes-base.switch",
+            "typeVersion": 3,
+            "position": [1120, 300],
+            "notes": "Routes to Q&A Agent (factual_qa) or rejection message (out_of_scope)."
+        },
+        {
+            "parameters": {
+                "assignments": {
+                    "assignments": [
+                        {
+                            "id": "assign-oos-answer",
+                            "name": "answer",
+                            "value": "I can only help with Smart Building topics (HVAC, maintenance, facilities, energy, safety). Please rephrase your question.",
+                            "type": "string"
+                        },
+                        {
+                            "id": "assign-oos-citations",
+                            "name": "citations",
+                            "value": "=[]",
+                            "type": "array"
+                        },
+                        {
+                            "id": "assign-oos-intent",
+                            "name": "intent",
+                            "value": "out_of_scope",
+                            "type": "string"
+                        }
+                    ]
+                },
+                "options": {}
+            },
+            "id": "node-set-oos",
+            "name": "Set — Out of Scope Response",
+            "type": "n8n-nodes-base.set",
+            "typeVersion": 3.4,
+            "position": [1340, 500],
+            "notes": "Returns a helpful 'can only help with buildings' message for off-topic questions."
+        },
+        {
+            "parameters": {
+                "method": "POST",
+                "url": "http://agents:8003/ask",
+                "sendBody": true,
+                "contentType": "json",
+                "specifyBody": "json",
+                "jsonBody": "={{ JSON.stringify({ question: $('POST /guard').item.json.sanitized_question }) }}",
+                "options": { "timeout": 120000 }
+            },
+            "id": "node-ask",
+            "name": "POST /ask",
+            "type": "n8n-nodes-base.httpRequest",
+            "typeVersion": 4.2,
+            "position": [1340, 300],
+            "notes": "Full RAG pipeline: vectorize → Qdrant search → Ollama LLM → cited answer. Timeout 2min for LLM."
+        },
+        {
+            "parameters": {
+                "jsCode": "// Normalize all branches into a single response shape.\n// Three possible inputs:\n//   1. from POST /ask (node-ask): { answer, citations, intent, answered_at }\n//   2. from Set — Out of Scope (node-set-oos): { answer, citations, intent }\n//   3. from Set — Blocked (node-set-blocked): { answer, citations, intent }\n\nconst item = $input.first().json;\n\nconst response = {\n  answer: item.answer || 'No answer available.',\n  citations: item.citations || [],\n  intent: item.intent || 'unknown',\n  answered_at: item.answered_at || new Date().toISOString()\n};\n\nconsole.log('[QueryPipeline] Response built — intent:', response.intent, '| citations:', response.citations.length);\n\nreturn [{ json: response }];"
+            },
+            "id": "node-format-response",
+            "name": "Format — Unified Response",
+            "type": "n8n-nodes-base.code",
+            "typeVersion": 2,
+            "position": [1560, 300],
+            "notes": "Merges all three branches into one consistent JSON shape for the Chat UI."
+        }
+    ],
+    "connections": {
+        "Webhook — Receive Question": {
+            "main": [[{ "node": "POST /guard", "type": "main", "index": 0 }]]
+        },
+        "POST /guard": {
+            "main": [[{ "node": "IF — Guard Passed?", "type": "main", "index": 0 }]]
+        },
+        "IF — Guard Passed?": {
+            "main": [
+                [{ "node": "POST /route", "type": "main", "index": 0 }],
+                [{ "node": "Set — Blocked Response", "type": "main", "index": 0 }]
+            ]
+        },
+        "POST /route": {
+            "main": [[{ "node": "Switch — Intent", "type": "main", "index": 0 }]]
+        },
+        "Switch — Intent": {
+            "main": [
+                [{ "node": "POST /ask", "type": "main", "index": 0 }],
+                [{ "node": "Set — Out of Scope Response", "type": "main", "index": 0 }]
+            ]
+        },
+        "POST /ask": {
+            "main": [[{ "node": "Format — Unified Response", "type": "main", "index": 0 }]]
+        },
+        "Set — Out of Scope Response": {
+            "main": [[{ "node": "Format — Unified Response", "type": "main", "index": 0 }]]
+        },
+        "Set — Blocked Response": {
+            "main": [[{ "node": "Format — Unified Response", "type": "main", "index": 0 }]]
+        }
+    },
+    "active": true,
+    "settings": { "executionOrder": "v1" },
+    "meta": { "instanceId": "smart-building-llm-query-v1" }
+}

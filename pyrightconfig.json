@@ -1,0 +1,26 @@
+{
+    "executionEnvironments": [
+        {
+            "root": "services/agents",
+            "extraPaths": ["."]
+        },
+        {
+            "root": "services/embedding",
+            "extraPaths": ["."]
+        },
+        {
+            "root": "services/ingestion",
+            "extraPaths": ["."]
+        },
+        {
+            "root": "tests",
+            "extraPaths": [
+                "../services/agents",
+                "../services/embedding",
+                "../services/ingestion"
+            ]
+        }
+    ],
+    "venvPath": "S:\\Documents\\Projects\\Smart_buildingLLM",
+    "venv": ".venv"
+}

@@ -1,0 +1,22 @@
+# ============================================================
+# Agents Service — Python Dependencies
+# ============================================================
+# Lightweight: NO torch or sentence-transformers.
+# Query embedding is delegated to the Embedding Service via HTTP.
+# ============================================================
+
+# --- Web Framework ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+
+# --- Configuration ---
+pydantic-settings>=2.1.0
+
+# --- HTTP Client (Ollama + Embedding Service calls) ---
+httpx>=0.27.0
+
+# --- Vector DB (read-only search) ---
+qdrant-client>=1.15.0
+
+# --- Async PostgreSQL (optional audit logging) ---
+asyncpg>=0.30.0

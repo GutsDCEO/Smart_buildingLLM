@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 
 from config import settings
-from models import EmbedRequest, EmbedResponse, HealthResponse, StoredChunkInfo
+from models import EmbedRequest, EmbedResponse, HealthResponse, StoredChunkInfo, VectorizeRequest, VectorizeResponse
 from embedder import embedder
 from qdrant_store import vector_store
 from db import connect_db, disconnect_db, log_ingestion
@@ -155,3 +155,30 @@ async def embed_chunks(request: EmbedRequest) -> EmbedResponse:
         chunks_stored=len(stored_chunks),
         stored_chunks=stored_chunks,
     )
+
+
+@app.post("/vectorize", response_model=VectorizeResponse, tags=["Embedding"])
+async def vectorize_text(request: VectorizeRequest) -> VectorizeResponse:
+    """
+    Convert a single text string into a raw embedding vector WITHOUT storing it.
+
+    Used by the Agents Service to embed user queries for Qdrant similarity search.
+    No DB write, no Qdrant upsert — pure in-memory conversion.
+
+    Raises:
+      400: Empty text.
+      500: Model not loaded or embedding error.
+    """
+    text = request.text.strip()
+
+    if not text:
+        raise HTTPException(status_code=400, detail="Text cannot be empty.")
+
+    try:
+        vectors = embedder.embed([text])
+    except RuntimeError as exc:
+        logger.error("Vectorize model error: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    logger.info("Vectorized query text (%d chars).", len(text))
+    return VectorizeResponse(vector=vectors[0], dimension=len(vectors[0]))

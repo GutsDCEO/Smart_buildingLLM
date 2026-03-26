@@ -68,3 +68,16 @@ class HealthResponse(BaseModel):
     service: str = "embedding"
     version: str = "0.1.0"
     model_loaded: bool = False
+
+
+class VectorizeRequest(BaseModel):
+    """Request body for the /vectorize endpoint."""
+
+    text: str = Field(..., description="Text to convert into a vector (not stored)")
+
+
+class VectorizeResponse(BaseModel):
+    """Response from the /vectorize endpoint — raw vector, no storage."""
+
+    vector: list[float] = Field(..., description="The embedding vector")
+    dimension: int = Field(..., description="Vector dimensionality (384 for all-MiniLM)")
