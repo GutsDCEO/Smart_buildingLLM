@@ -167,6 +167,8 @@ n8n/nodes/
 n8n/config/
 *.log
 **/wheels/
+*.resolved
+.env.example
 
 # AI/ML Specific
 .cache/
