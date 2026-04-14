@@ -14,9 +14,9 @@ import logging
 
 import httpx
 
+from typing import Any
 from config import settings
 from models import AskRequest, AskResponse, Citation
-from ollama_client import ollama_client
 from qdrant_search import qdrant_search, SearchResult
 
 logger = logging.getLogger(__name__)
@@ -40,6 +40,9 @@ CRITICAL RULES:
 
 class QAAgent:
     """Answers user questions using RAG: vectorize → search → generate."""
+
+    def __init__(self, llm_client: Any):
+        self.llm_client = llm_client
 
     async def answer(self, request: AskRequest) -> AskResponse:
         """
@@ -78,8 +81,8 @@ class QAAgent:
         # --- Step 3: Build context prompt ---
         context_prompt = self._build_context_prompt(question, results)
 
-        # --- Step 4: Generate answer via Ollama ---
-        raw_answer = await ollama_client.generate(
+        # --- Step 4: Generate answer via injected LLM client ---
+        raw_answer = await self.llm_client.generate(
             prompt=context_prompt,
             system_prompt=_QA_SYSTEM_PROMPT,
             temperature=0.2,  # Low = factual, deterministic
@@ -170,5 +173,3 @@ class QAAgent:
         ]
 
 
-# Singleton instance
-qa_agent = QAAgent()

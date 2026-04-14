@@ -15,12 +15,20 @@ LABEL service="ingestion"
 RUN groupadd --system appgroup && \
     useradd --system --gid appgroup appuser
 
+# Install OS-level dependencies:
+#   tesseract-ocr — OCR engine for scanned PDFs
+#   poppler-utils — PDF rendering utilities (pdftoppm)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    tesseract-ocr-eng \
+    poppler-utils \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Set working directory
 WORKDIR /app
 
-# Install dependencies with BuildKit cache mount.
-# The pip cache at /root/.cache/pip persists across builds
-# inside Docker's Linux layer, making builds resumable.
+# Install Python dependencies with BuildKit cache mount.
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \

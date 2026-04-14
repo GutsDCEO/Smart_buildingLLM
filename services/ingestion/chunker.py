@@ -27,8 +27,8 @@ logger = logging.getLogger(__name__)
 _ENCODING = tiktoken.get_encoding("cl100k_base")
 
 # Sentence boundary regex — splits on period, exclamation, or question mark
-# followed by whitespace. Avoids splitting on abbreviations like "Dr." loosely.
-_SENTENCE_SPLIT_PATTERN = re.compile(r"(?<=[.!?])\s+")
+# OR newlines (to handle lists/checklists without periods).
+_SENTENCE_SPLIT_PATTERN = re.compile(r"(?:(?<=[.!?])\s+)|(?:\n+)")
 
 
 def chunk_text(

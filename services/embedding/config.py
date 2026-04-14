@@ -15,7 +15,7 @@ class EmbeddingSettings(BaseSettings):
     embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # --- Qdrant ---
-    qdrant_host: str = "localhost"
+    qdrant_host: str = "qdrant"
     qdrant_port: int = 6333
     qdrant_collection_name: str = "smart_building_docs"
     qdrant_vector_size: int = 384  # all-MiniLM-L6-v2 output dimension
@@ -24,7 +24,7 @@ class EmbeddingSettings(BaseSettings):
     postgres_user: str = "smartbuilding"
     postgres_password: str = ""
     postgres_db: str = "smartbuilding_metadata"
-    postgres_host: str = "localhost"
+    postgres_host: str = "postgres"
     postgres_port: int = 5432
 
     # --- Service ---

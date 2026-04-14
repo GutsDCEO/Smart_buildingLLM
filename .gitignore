@@ -182,3 +182,45 @@ models/
 
 # Infrastructure Overrides
 docker-compose.override.yml
+
+# ============================================================
+# Modern Frontend / Fullstack (Safe Push)
+# ============================================================
+
+# Node / JS Dependencies
+node_modules/
+**/node_modules/
+.pnp
+.pnp.*
+yarn-error.log*
+npm-debug.log*
+
+# Next.js / React
+.next/
+**/ .next/
+out/
+build/
+.vercel
+*.tsbuildinfo
+next-env.d.ts
+
+# Modern Build Tools
+.turbo/
+dist/
+.cache/
+.huggingface/
+
+# Environment / Secret Variations
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+.history/
+*.resolved

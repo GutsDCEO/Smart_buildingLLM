@@ -12,8 +12,8 @@ from __future__ import annotations
 import json
 import logging
 
+from typing import Any
 from models import IntentType, RouteRequest, RouteResponse
-from ollama_client import ollama_client
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,9 @@ Response format:
 class RouterAgent:
     """Classifies user questions into intent categories using an LLM."""
 
+    def __init__(self, llm_client: Any):
+        self.llm_client = llm_client
+
     async def classify(self, request: RouteRequest) -> RouteResponse:
         """
         Classify the intent of a user question.
@@ -52,12 +55,14 @@ class RouterAgent:
         """
         prompt = f'Classify this question: "{request.question}"'
 
+        logger.info("Router: Starting classification for question: %.50s...", request.question)
         try:
-            raw_response = await ollama_client.generate(
+            raw_response = await self.llm_client.generate(
                 prompt=prompt,
                 system_prompt=_ROUTER_SYSTEM_PROMPT,
                 temperature=0.0,  # Fully deterministic classification
             )
+            logger.info("Router: LLM response received.")
 
             result = self._parse_response(raw_response)
             logger.info(
@@ -115,5 +120,3 @@ class RouterAgent:
             )
 
 
-# Singleton instance
-router_agent = RouterAgent()

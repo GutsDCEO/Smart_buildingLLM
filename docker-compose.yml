@@ -58,10 +58,10 @@ services:
       dockerfile: Dockerfile
     container_name: sb_ingestion
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - CHUNK_SIZE_TOKENS=${CHUNK_SIZE_TOKENS:-500}
-      - CHUNK_OVERLAP_TOKENS=${CHUNK_OVERLAP_TOKENS:-50}
     ports:
       - "${INGESTION_SERVICE_PORT:-8001}:8001"
     networks:
@@ -81,18 +81,10 @@ services:
       dockerfile: Dockerfile
     container_name: sb_embedding
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
-      - EMBEDDING_MODEL_NAME=${EMBEDDING_MODEL_NAME:-sentence-transformers/all-MiniLM-L6-v2}
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-smart_building_docs}
-      - QDRANT_VECTOR_SIZE=384
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_USER=${POSTGRES_USER:-smartbuilding}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-      - POSTGRES_DB=${POSTGRES_DB:-smartbuilding_metadata}
     ports:
       - "${EMBEDDING_SERVICE_PORT:-8002}:8002"
     networks:
@@ -106,7 +98,7 @@ services:
       test: [ "CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')" ]
       interval: 30s
       timeout: 10s
-      retries: 3
+      retries: 10
 
   # ──────────────────────────────────────────────────────────
   # Workflow Orchestration — n8n
@@ -153,19 +145,16 @@ services:
       dockerfile: Dockerfile
     container_name: sb_agents
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
-      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
-      - OLLAMA_MODEL=${OLLAMA_MODEL:-llama3.1}
-      - QDRANT_HOST=qdrant
-      - QDRANT_PORT=6333
-      - QDRANT_COLLECTION_NAME=${QDRANT_COLLECTION_NAME:-smart_building_docs}
-      - EMBEDDING_SERVICE_URL=http://embedding:8002
-      - TOP_K_RESULTS=${TOP_K_RESULTS:-5}
-      - MAX_QUERY_LENGTH=2000
-      - MIN_QUERY_LENGTH=3
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     ports:
       - "${AGENTS_SERVICE_PORT:-8003}:8003"
+    volumes:
+      - ./services/agents:/app
+      - ./tests:/app/tests
+      - ./data/ingest:/data/ingest:ro
     networks:
       - sb_network
     depends_on:
@@ -205,9 +194,37 @@ services:
     #           count: all
     #           capabilities: [gpu]
 
-    # ──────────────────────────────────────────────────────────
-    # Named Volumes — Persistent Storage
-    # ──────────────────────────────────────────────────────────
+  # ──────────────────────────────────────────────────────────────
+  # Chat UI — Next.js Interface (Phase 3)
+  # ──────────────────────────────────────────────────────────────
+  chat-ui:
+    build:
+      context: ./services/chat-ui
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=http://localhost:8003
+    container_name: sb_chat_ui
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+    ports:
+      - "${CHAT_UI_PORT:-3000}:3000"
+    networks:
+      - sb_network
+    depends_on:
+      agents:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ──────────────────────────────────────────────────────────────
+  # Named Volumes — Persistent Storage
+  # ──────────────────────────────────────────────────────────────
 volumes:
   qdrant_data:
     driver: local

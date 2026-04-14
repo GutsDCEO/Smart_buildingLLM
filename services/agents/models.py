@@ -92,6 +92,20 @@ class AskRequest(BaseModel):
     question: str = Field(..., description="The user's question")
 
 
+class ChatRequest(BaseModel):
+    """Input to the unified /chat SSE endpoint.
+
+    Extends AskRequest with an optional session_id for future
+    conversation history (Phase 4).
+    """
+
+    question: str = Field(..., description="The user's question")
+    session_id: Optional[str] = Field(
+        default=None,
+        description="Optional session ID for conversation history (Phase 4)",
+    )
+
+
 class AskResponse(BaseModel):
     """Output from the Q&A Agent — the core product."""
 
@@ -108,6 +122,19 @@ class AskResponse(BaseModel):
         default_factory=lambda: datetime.now(timezone.utc),
         description="UTC timestamp of when the answer was generated",
     )
+
+
+# ──────────────────────────────────────────────────────────────
+# Ingestion Gateway DTO
+# ──────────────────────────────────────────────────────────────
+
+class IngestResponse(BaseModel):
+    """Response returned after successfully ingesting a document via the Gateway."""
+
+    filename: str = Field(..., description="Name of the ingested file")
+    chunks_extracted: int = Field(..., description="Number of text chunks extracted")
+    chunks_stored: int = Field(..., description="Number of vectors stored in Qdrant")
+    status: str = Field(default="success", description="Status message")
 
 
 # ──────────────────────────────────────────────────────────────

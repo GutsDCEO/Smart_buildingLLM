@@ -14,15 +14,24 @@ class AgentsSettings(BaseSettings):
     # --- Ollama (LLM) ---
     ollama_host: str = "http://ollama:11434"
     ollama_model: str = "llama3.1"
-    ollama_timeout_seconds: int = 120
+    ollama_timeout_seconds: int = 1200
+
+    # --- LLM Provider ("ollama" or "groq") ---
+    llm_provider: str = "ollama"
+
+    # --- Groq Cloud (OWASP A02: secret from env only, never hardcoded) ---
+    groq_api_key: str = ""
+    groq_model: str = "llama-3.1-70b-versatile"
+    groq_timeout_seconds: int = 30
 
     # --- Qdrant (Vector Search) ---
     qdrant_host: str = "qdrant"
     qdrant_port: int = 6333
     qdrant_collection_name: str = "smart_building_docs"
 
-    # --- Embedding Service (query vectorization) ---
+    # --- Upstream Services ---
     embedding_service_url: str = "http://embedding:8002"
+    ingestion_service_url: str = "http://ingestion:8001"
 
     # --- RAG Parameters ---
     top_k_results: int = 5
@@ -34,6 +43,19 @@ class AgentsSettings(BaseSettings):
     # --- Service ---
     agents_service_port: int = 8003
     log_level: str = "INFO"
+
+    # --- PostgreSQL (Persistence) ---
+    postgres_host: str = "postgres"
+    postgres_port: int = 5432
+    postgres_user: str = "smartbuilding"
+    postgres_password: str = ""
+    postgres_db: str = "smartbuilding_metadata"
+
+    # --- Local Ingest Folder (mounted from host) ---
+    ingest_folder: str = "/data/ingest"
+
+    # --- Chat UI CORS ---
+    chat_ui_cors_origin: str = "http://localhost:3000"
 
     model_config = {
         "env_file": ".env",

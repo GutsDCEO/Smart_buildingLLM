@@ -60,7 +60,7 @@ async def test_full_rag_pipeline_returns_answer_with_citations(agent):
     """Full pipeline: vectorize → search → generate should produce answer + citations."""
     with (
         patch.object(agent, "_embed_question", new_callable=AsyncMock, return_value=SAMPLE_VECTOR),
-        patch("qa_agent.qdrant_search.is_connected", new=True),
+        patch("qa_agent.qdrant_search._client", new=MagicMock()),  # truthy → is_connected=True
         patch("qa_agent.qdrant_search.search", return_value=SAMPLE_RESULTS),
         patch("qa_agent.ollama_client.generate", new_callable=AsyncMock, return_value=LLM_ANSWER),
     ):
@@ -78,7 +78,7 @@ async def test_citations_are_sorted_by_relevance(agent):
     """Citations should preserve the search-result relevance order (highest first)."""
     with (
         patch.object(agent, "_embed_question", new_callable=AsyncMock, return_value=SAMPLE_VECTOR),
-        patch("qa_agent.qdrant_search.is_connected", new=True),
+        patch("qa_agent.qdrant_search._client", new=MagicMock()),  # truthy → is_connected=True
         patch("qa_agent.qdrant_search.search", return_value=SAMPLE_RESULTS),
         patch("qa_agent.ollama_client.generate", new_callable=AsyncMock, return_value=LLM_ANSWER),
     ):
@@ -97,7 +97,7 @@ async def test_empty_search_results_returns_graceful_message(agent):
     """When Qdrant has no matching chunks, should return a helpful no-data message."""
     with (
         patch.object(agent, "_embed_question", new_callable=AsyncMock, return_value=SAMPLE_VECTOR),
-        patch("qa_agent.qdrant_search.is_connected", new=True),
+        patch("qa_agent.qdrant_search._client", new=MagicMock()),  # truthy → is_connected=True
         patch("qa_agent.qdrant_search.search", return_value=[]),
     ):
         result = await agent.answer(AskRequest(question="What is the certified capacity?"))
@@ -169,7 +169,7 @@ async def test_qdrant_not_connected_raises_runtime_error(agent):
     """If Qdrant is not connected, should raise RuntimeError (caught by controller)."""
     with (
         patch.object(agent, "_embed_question", new_callable=AsyncMock, return_value=SAMPLE_VECTOR),
-        patch("qa_agent.qdrant_search.is_connected", new=False),
+        patch("qa_agent.qdrant_search._client", new=None),  # None → is_connected=False
     ):
         with pytest.raises(RuntimeError, match="Qdrant"):
             await agent.answer(AskRequest(question="What is the fire safety plan?"))
