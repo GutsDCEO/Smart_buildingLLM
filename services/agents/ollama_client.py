@@ -18,11 +18,12 @@ from typing import AsyncGenerator, Optional
 import httpx
 
 from config import settings
+from llm_interface import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
-class OllamaClient:
+class OllamaClient(LLMProvider):
     """Async HTTP client for Ollama's /api/generate endpoint."""
 
     def __init__(self) -> None:

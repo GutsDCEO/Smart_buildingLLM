@@ -11,20 +11,38 @@ import Sidebar from "@/components/Sidebar";
 import type { SidebarTab } from "@/components/Sidebar";
 import KnowledgeBase from "@/components/KnowledgeBase";
 
-// ── Session Management ───────────────────────────────────────────
+// ── Session helpers ───────────────────────────────────────────────
 
-function getSessionId(): string {
-  if (typeof window === "undefined") return "default-session";
-  let id = localStorage.getItem("sb_session_id");
+const SESSION_KEY = "sb_session_id";
+const SESSION_LIST_KEY = "sb_session_list";
+
+function generateSessionId(): string {
+  return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function getOrCreateSessionId(): string {
+  if (typeof window === "undefined") return generateSessionId();
+  let id = localStorage.getItem(SESSION_KEY);
   if (!id) {
-    id = `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    localStorage.setItem("sb_session_id", id);
+    id = generateSessionId();
+    localStorage.setItem(SESSION_KEY, id);
   }
   return id;
 }
 
 let msgIdCounter = 0;
 const newId = () => `msg-${++msgIdCounter}`;
+
+// ── Starter prompt chips ─────────────────────────────────────────
+
+const STARTER_CHIPS = [
+  "What maintenance tasks are due this month?",
+  "Explain BACnet MSTP network topology",
+  "What are the HVAC seasonal changeover steps?",
+  "List the GSA Smart Buildings implementation phases",
+];
+
+// ── Main Page Component ──────────────────────────────────────────
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -34,22 +52,28 @@ export default function ChatPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [activeTab, setActiveTab] = useState<SidebarTab>("chat");
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [thinkingEnabled, setThinkingEnabled] = useState(false);
+  const [sessionId, setSessionId] = useState<string>(getOrCreateSessionId);
+
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const sessionId = useRef(getSessionId());
 
-  // Poll /health on mount for welcome message
+  // ── Health check ─────────────────────────────────────────────
+
   useEffect(() => {
-    fetchHealth().then((h) => {
-      setHealth(h);
-    });
+    fetchHealth().then(setHealth);
   }, []);
 
-  // Load chat history on mount
+  // ── Load chat history when session changes ────────────────────
+
   useEffect(() => {
-    if (historyLoaded) return;
-    fetchHistory(sessionId.current).then((historyMessages) => {
+    setHistoryLoaded(false);
+    setMessages([]);
+    setIsLoadingHistory(true);
+
+    fetchHistory(sessionId).then((historyMessages) => {
       if (historyMessages.length > 0) {
         const restored: Message[] = historyMessages.map((hm) => ({
           id: newId(),
@@ -58,49 +82,61 @@ export default function ChatPage() {
           timestamp: new Date(hm.created_at),
         }));
         setMessages(restored);
-      } else if (health) {
-        // Only show welcome if no history exists
-        setMessages([{
-          id: newId(),
-          role: "assistant",
-          content: `👋 Connected to **Smart Building AI** (v${health.version}).\n\n`
-            + `LLM: ${health.ollama_reachable ? "✅ Ready" : "⚠️ Offline"} · `
-            + `Vector DB: ${health.qdrant_reachable ? "✅ Ready" : "⚠️ Offline"}\n\n`
-            + `Ask me anything about your building — HVAC schedules, maintenance logs, equipment specs, and more.`,
-          timestamp: new Date(),
-        }]);
       }
       setHistoryLoaded(true);
+      setIsLoadingHistory(false);
     });
-  }, [health, historyLoaded]);
+  }, [sessionId]);
 
-  // Auto-scroll to bottom on new messages
+  // ── Auto-scroll ───────────────────────────────────────────────
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // Keyboard shortcut: Ctrl+K to focus input
+  // ── Keyboard shortcuts ────────────────────────────────────────
+
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    const handler = (e: globalThis.KeyboardEvent) => {
       if (e.ctrlKey && e.key === "k") {
         e.preventDefault();
         inputRef.current?.focus();
       }
     };
-    window.addEventListener("keydown", handler as unknown as EventListener);
-    return () => window.removeEventListener("keydown", handler as unknown as EventListener);
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, []);
 
-  const handleSend = useCallback(async () => {
-    const q = input.trim();
+  // ── New Chat ──────────────────────────────────────────────────
+
+  const handleNewChat = useCallback(() => {
+    const newSessionId = generateSessionId();
+    localStorage.setItem(SESSION_KEY, newSessionId);
+    setSessionId(newSessionId);
+    setMessages([]);
+    setHistoryLoaded(false);
+    setThinkingEnabled(false);
+    inputRef.current?.focus();
+  }, []);
+
+  // ── Switch to existing session ────────────────────────────────
+
+  const handleSessionSelect = useCallback((id: string) => {
+    if (id === sessionId) return;
+    localStorage.setItem(SESSION_KEY, id);
+    setSessionId(id);
+    setActiveTab("chat");
+  }, [sessionId]);
+
+  // ── Send message ──────────────────────────────────────────────
+
+  const handleSend = useCallback(async (questionOverride?: string) => {
+    const q = (questionOverride ?? input).trim();
     if (!q || isStreaming) return;
 
-    // Add user message
     const userMsg: Message = {
       id: newId(), role: "user", content: q, timestamp: new Date(),
     };
-
-    // Placeholder AI message (will fill in with streaming tokens)
     const aiId = newId();
     const aiMsg: Message = {
       id: aiId, role: "assistant", content: "", timestamp: new Date(), isStreaming: true,
@@ -118,36 +154,27 @@ export default function ChatPage() {
     let finalCitations: CitationData[] = [];
 
     try {
-      for await (const event of streamChat(q, controller.signal, sessionId.current)) {
+      for await (const event of streamChat(q, controller.signal, sessionId, thinkingEnabled)) {
         switch (event.type) {
           case "status":
             setPipelineStage(event.data.stage as PipelineStage);
             break;
-
           case "token":
             accumulatedText += event.data.text;
             setMessages((prev) =>
-              prev.map((m) =>
-                m.id === aiId ? { ...m, content: accumulatedText } : m
-              )
+              prev.map((m) => m.id === aiId ? { ...m, content: accumulatedText } : m)
             );
             break;
-
           case "citations":
             finalCitations = event.data;
             break;
-
           case "error":
             accumulatedText = accumulatedText || event.data.message;
             setMessages((prev) =>
-              prev.map((m) =>
-                m.id === aiId ? { ...m, content: accumulatedText } : m
-              )
+              prev.map((m) => m.id === aiId ? { ...m, content: accumulatedText } : m)
             );
             break;
-
           case "done":
-            // Finalize message — remove isStreaming, add citations
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === aiId
@@ -172,7 +199,7 @@ export default function ChatPage() {
       setTimeout(() => setPipelineStage("idle"), 800);
       abortRef.current = null;
     }
-  }, [input, isStreaming]);
+  }, [input, isStreaming, sessionId, thinkingEnabled]);
 
   const handleKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -184,61 +211,106 @@ export default function ChatPage() {
     }
   };
 
-  const handleStop = () => {
-    abortRef.current?.abort();
-  };
+  const handleStop = () => abortRef.current?.abort();
+
+  // ── Status dot color ──────────────────────────────────────────
 
   const statusColor = health
-    ? health.ollama_reachable && health.qdrant_reachable
-      ? "#22c55e"
-      : "#f59e0b"
-    : "#6b7280";
+    ? health.ollama_reachable && health.qdrant_reachable ? "#48bb78" : "#ed8936"
+    : "#718096";
+
+  const showEmpty = historyLoaded && messages.length === 0 && !isLoadingHistory;
+
+  // ── Render ────────────────────────────────────────────────────
 
   return (
     <div className="app-layout">
-      {/* ── Sidebar ── */}
-      <Sidebar activeTab={activeTab} onTabChange={setActiveTab} />
+      {/* Sidebar */}
+      <Sidebar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        activeSessionId={sessionId}
+        onSessionSelect={handleSessionSelect}
+        onNewChat={handleNewChat}
+      />
 
-      {/* ── Main Area ── */}
+      {/* Main */}
       <div className="app-main">
         {activeTab === "chat" ? (
-          <div className="app">
-            {/* ── Header ── */}
+          <div className="chat-container">
+            {/* Header */}
             <header className="header">
-              <div className="header-brand">
-                <span className="header-logo">🏗️</span>
+              <div className="header-left">
                 <div>
-                  <h1 className="header-title">Smart Building AI</h1>
-                  <p className="header-sub">RAG-Powered Local Assistant</p>
+                  <div className="header-title">Smart Building AI</div>
+                  <div className="header-sub">RAG · Qwen3-32B · BGE-base-768</div>
                 </div>
               </div>
               <div className="header-status">
                 <span className="status-dot" style={{ background: statusColor }} />
-                <span className="status-text">
-                  {health ? `${health.service} v${health.version}` : "Connecting..."}
-                </span>
+                <span>{health ? `${health.service} v${health.version}` : "Connecting..."}</span>
               </div>
             </header>
 
-            {/* ── Message List ── */}
-            <main className="messages">
+            {/* Message list */}
+            <main className="messages" id="chat-messages">
+              {/* Skeleton while loading history */}
+              {isLoadingHistory && (
+                <div className="skeleton">
+                  <div className="skeleton-line" style={{ width: "60%" }} />
+                  <div className="skeleton-line" style={{ width: "85%" }} />
+                  <div className="skeleton-line" style={{ width: "45%" }} />
+                </div>
+              )}
+
+              {/* Empty state */}
+              {showEmpty && (
+                <div className="empty-state">
+                  <div className="empty-icon">🏗️</div>
+                  <div className="empty-title">Smart Building AI</div>
+                  <div className="empty-sub">
+                    Ask anything about your building — HVAC, BMS, BACnet, maintenance, or equipment specs.
+                  </div>
+                  <div className="empty-chips">
+                    {STARTER_CHIPS.map((chip) => (
+                      <button
+                        key={chip}
+                        className="empty-chip"
+                        onClick={() => handleSend(chip)}
+                        disabled={isStreaming}
+                      >
+                        {chip}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {messages.map((msg) => (
                 <ChatMessage key={msg.id} message={msg} />
               ))}
               <div ref={bottomRef} />
             </main>
 
-            {/* ── Pipeline Status Bar ── */}
+            {/* Pipeline status */}
             <PipelineStatus activeStage={pipelineStage} />
 
-            {/* ── Input Bar ── */}
-            <footer className="input-bar">
-              <div className="input-wrap">
+            {/* Input area */}
+            <div className="input-area">
+              {/* Persistent thinking warning */}
+              {thinkingEnabled && (
+                <div className="thinking-badge" id="thinking-badge">
+                  <span className="thinking-badge-dot" />
+                  <span>🧠 Deep thinking active — uses ~3× more quota per message</span>
+                </div>
+              )}
+
+              <div className="input-box">
                 <textarea
                   ref={inputRef}
                   id="chat-input"
                   className="input-field"
-                  placeholder="Ask about HVAC, maintenance, equipment... (↵ send · Shift+↵ newline · Ctrl+K focus)"
+                  placeholder="Message Smart Building AI..."
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyDown={handleKeyDown}
@@ -246,25 +318,44 @@ export default function ChatPage() {
                   disabled={isStreaming}
                   autoFocus
                 />
-                {isStreaming ? (
-                  <button className="send-btn send-btn--stop" onClick={handleStop} title="Stop (Esc)">
-                    ⏹
-                  </button>
-                ) : (
-                  <button
-                    className="send-btn"
-                    onClick={handleSend}
-                    disabled={!input.trim()}
-                    title="Send (Enter)"
-                  >
-                    ➤
-                  </button>
-                )}
+                <div className="input-toolbar">
+                  <div className="input-tools-left">
+                    {/* Thinking toggle */}
+                    <button
+                      id="thinking-toggle"
+                      className={`think-toggle ${thinkingEnabled ? "think-toggle--active" : ""}`}
+                      onClick={() => setThinkingEnabled((v) => !v)}
+                      title={thinkingEnabled ? "Disable deep thinking (saves quota)" : "Enable deep thinking (CoT reasoning)"}
+                    >
+                      <span className="think-icon">🧠</span>
+                      <span>{thinkingEnabled ? "Thinking ON" : "Think"}</span>
+                    </button>
+                  </div>
+
+                  <div className="input-actions">
+                    {isStreaming ? (
+                      <button className="send-btn send-btn--stop" onClick={handleStop} title="Stop (Esc)" id="stop-btn">
+                        ⏹
+                      </button>
+                    ) : (
+                      <button
+                        className="send-btn"
+                        id="send-btn"
+                        onClick={() => handleSend()}
+                        disabled={!input.trim()}
+                        title="Send (Enter)"
+                      >
+                        ↑
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
+
               <p className="input-hint">
-                Ctrl+K to focus · Esc to stop streaming · Shift+Enter for newline
+                Enter to send · Shift+Enter for newline · Ctrl+K to focus · Esc to stop
               </p>
-            </footer>
+            </div>
           </div>
         ) : (
           <KnowledgeBase />

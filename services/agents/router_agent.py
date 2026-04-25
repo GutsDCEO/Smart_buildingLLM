@@ -12,7 +12,8 @@ from __future__ import annotations
 import json
 import logging
 
-from typing import Any
+from domain_config import domain_config
+from llm_interface import LLMProvider
 from models import IntentType, RouteRequest, RouteResponse
 
 logger = logging.getLogger(__name__)
@@ -21,27 +22,25 @@ logger = logging.getLogger(__name__)
 # System Prompt — Intent Classification
 # ──────────────────────────────────────────────────────────────
 
-_ROUTER_SYSTEM_PROMPT = """You are an intent classifier for a Smart Building AI assistant.
-
-Your ONLY job is to classify a user's question into one of these categories:
-- "factual_qa": The question is about buildings, HVAC, maintenance, equipment, facilities, energy, safety, regulations, construction, or any Smart Building topic.
-- "out_of_scope": The question is completely unrelated to buildings or facilities management (e.g., cooking recipes, sports scores, personal advice).
-
-IMPORTANT RULES:
-1. When in doubt, classify as "factual_qa" — it is better to attempt an answer than to reject a valid question.
-2. Questions about general engineering, sustainability, or workplace safety ARE in scope.
-3. Respond ONLY with valid JSON. No explanation, no markdown, no extra text.
-
-Response format:
-{"intent": "factual_qa", "confidence": 0.95}
+# Router prompt loaded from domain config at runtime.
+# Fallback to a sensible default if domain config is not available.
+_FALLBACK_ROUTER_PROMPT = """You are an intent classifier.
+Classify into: "factual_qa" or "out_of_scope".
+Respond with JSON only: {"intent": "...", "confidence": 0.95}
 """
+
+
+def _get_router_prompt() -> str:
+    """Load router prompt from domain config, with fallback."""
+    prompt = domain_config.router_system_prompt
+    return prompt if prompt else _FALLBACK_ROUTER_PROMPT
 
 
 class RouterAgent:
     """Classifies user questions into intent categories using an LLM."""
 
-    def __init__(self, llm_client: Any):
-        self.llm_client = llm_client
+    def __init__(self, llm_client: LLMProvider) -> None:
+        self._llm = llm_client
 
     async def classify(self, request: RouteRequest) -> RouteResponse:
         """
@@ -57,9 +56,9 @@ class RouterAgent:
 
         logger.info("Router: Starting classification for question: %.50s...", request.question)
         try:
-            raw_response = await self.llm_client.generate(
+            raw_response = await self._llm.generate(
                 prompt=prompt,
-                system_prompt=_ROUTER_SYSTEM_PROMPT,
+                system_prompt=_get_router_prompt(),
                 temperature=0.0,  # Fully deterministic classification
             )
             logger.info("Router: LLM response received.")

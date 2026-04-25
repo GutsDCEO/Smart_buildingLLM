@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import type { CitationData } from "@/lib/api";
 import CitationCard from "./CitationCard";
 
@@ -19,8 +19,8 @@ interface ChatMessageProps {
 
 export default function ChatMessage({ message }: ChatMessageProps) {
   const contentRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
 
-  // Auto-scroll to bottom as new tokens arrive
   useEffect(() => {
     if (message.isStreaming && contentRef.current) {
       contentRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
@@ -34,15 +34,18 @@ export default function ChatMessage({ message }: ChatMessageProps) {
   });
 
   const copyToClipboard = () => {
-    navigator.clipboard.writeText(message.content);
+    navigator.clipboard.writeText(message.content).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    });
   };
 
   return (
     <div className={`message-row ${isUser ? "message-row--user" : "message-row--ai"}`}>
-      <div className={`message-bubble ${isUser ? "message-bubble--user" : "message-bubble--ai"}`}>
+      <div className="message-inner">
         {/* Avatar */}
-        <div className="message-avatar">
-          {isUser ? "👤" : "🏗️"}
+        <div className={`message-avatar ${isUser ? "message-avatar--user" : "message-avatar--ai"}`}>
+          {isUser ? "👤" : "SB"}
         </div>
 
         <div className="message-content-wrap">
@@ -61,20 +64,31 @@ export default function ChatMessage({ message }: ChatMessageProps) {
           {/* Citations */}
           {!isUser && message.citations && message.citations.length > 0 && (
             <div className="message-citations">
-              <div className="citations-label">📚 Sources</div>
+              <div className="citations-label">Sources</div>
               <div className="citations-list">
                 {message.citations.map((c, i) => (
-                  <CitationCard key={`${c.source_file}-${c.chunk_index}`} citation={c} index={i} />
+                  <CitationCard
+                    key={`${c.source_file}-${c.chunk_index}`}
+                    citation={c}
+                    index={i}
+                  />
                 ))}
               </div>
             </div>
           )}
 
-          {/* Copy button (only for complete AI messages) */}
+          {/* Actions — fade in on hover */}
           {!isUser && !message.isStreaming && message.content && (
-            <button className="copy-btn" onClick={copyToClipboard} title="Copy answer">
-              📋
-            </button>
+            <div className="msg-actions">
+              <button
+                className="action-btn"
+                onClick={copyToClipboard}
+                title="Copy answer"
+                id={`copy-${message.id}`}
+              >
+                {copied ? "✓ Copied" : "Copy"}
+              </button>
+            </div>
           )}
         </div>
       </div>

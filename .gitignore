@@ -224,3 +224,7 @@ dist/
 .vscode/
 .history/
 *.resolved
+
+# Agent Frameworks
+.agents/
+.gemini/

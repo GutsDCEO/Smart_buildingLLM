@@ -21,8 +21,8 @@ class AgentsSettings(BaseSettings):
 
     # --- Groq Cloud (OWASP A02: secret from env only, never hardcoded) ---
     groq_api_key: str = ""
-    groq_model: str = "llama-3.1-70b-versatile"
-    groq_timeout_seconds: int = 30
+    groq_model: str = "deepseek-r1-distill-llama-70b"
+    groq_timeout_seconds: int = 60
 
     # --- Qdrant (Vector Search) ---
     qdrant_host: str = "qdrant"
@@ -34,7 +34,11 @@ class AgentsSettings(BaseSettings):
     ingestion_service_url: str = "http://ingestion:8001"
 
     # --- RAG Parameters ---
-    top_k_results: int = 5
+    top_k_results: int = 15  # Over-retrieve for re-ranking
+
+    # --- Re-Ranker ---
+    reranker_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    reranked_top_n: int = 5  # Keep top-N after re-ranking
 
     # --- Guardrail Limits ---
     max_query_length: int = 2000
@@ -53,6 +57,9 @@ class AgentsSettings(BaseSettings):
 
     # --- Local Ingest Folder (mounted from host) ---
     ingest_folder: str = "/data/ingest"
+
+    # --- Domain Configuration ---
+    domain_config: str = "smart_building"
 
     # --- Chat UI CORS ---
     chat_ui_cors_origin: str = "http://localhost:3000"

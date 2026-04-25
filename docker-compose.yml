@@ -58,6 +58,10 @@ services:
       dockerfile: Dockerfile
     container_name: sb_ingestion
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
     env_file:
       - .env
     environment:
@@ -154,7 +158,8 @@ services:
     volumes:
       - ./services/agents:/app
       - ./tests:/app/tests
-      - ./data/ingest:/data/ingest:ro
+      - ./data/ingest:/data/ingest
+      - ./config:/config
     networks:
       - sb_network
     depends_on:

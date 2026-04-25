@@ -93,16 +93,16 @@ class AskRequest(BaseModel):
 
 
 class ChatRequest(BaseModel):
-    """Input to the unified /chat SSE endpoint.
-
-    Extends AskRequest with an optional session_id for future
-    conversation history (Phase 4).
-    """
+    """Input to the unified /chat SSE endpoint."""
 
     question: str = Field(..., description="The user's question")
     session_id: Optional[str] = Field(
         default=None,
-        description="Optional session ID for conversation history (Phase 4)",
+        description="Optional session ID for conversation history",
+    )
+    enable_thinking: bool = Field(
+        default=False,
+        description="Enable Qwen3 Chain-of-Thought reasoning mode (~3x token cost)",
     )
 
 

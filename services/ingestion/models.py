@@ -21,7 +21,12 @@ class ParsedPage(BaseModel):
     source_file: str = Field(..., description="Original filename")
     metadata: dict = Field(
         default_factory=dict,
-        description="Additional metadata (e.g., author, title)",
+        description=(
+            "Additional metadata. Keys set by the PDF parser include: "
+            "total_pages, ingestion_date, extraction_source "
+            "('pymupdf' | 'docling' | 'tesseract'), docling_used (bool), "
+            "ocr_used (bool)."
+        ),
     )
 
 

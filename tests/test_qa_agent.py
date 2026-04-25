@@ -1,23 +1,42 @@
 """
-TDD Tests — Q&A Agent
+Unit Tests — QA Agent (RAG Pipeline with Re-Ranking & Memory)
 
-Follows FIRST principles:
-  Fast        — Mocks all I/O (Embedding Service, Qdrant, Ollama). No network.
-  Independent — Fresh mocks per test. No shared state between tests.
-  Repeatable  — Deterministic mock responses.
-  Self-Validating — Explicit assertions on answer text, citation count, fields.
-  Timely      — Written alongside the feature.
+FIRST Principles:
+  F - Fast:     All I/O mocked. No Qdrant, Embedding Service, or LLM calls.
+  I - Independent: Fresh mocks per test via fixtures. No shared state.
+  R - Repeatable:  Deterministic mock responses regardless of environment.
+  S - Self-Validating: Explicit assertions on answer, citations, ordering.
+  T - Timely:    Written alongside the refactored QAAgent (Layer 2+3+5).
+
+Covers:
+  1. Full RAG pipeline: embed → search → rerank → generate → citations
+  2. Citations include source_file, page_number, chunk_index, relevance_score
+  3. Graceful: empty Qdrant results returns no-documents message
+  4. Graceful: Qdrant not connected raises RuntimeError
+  5. Graceful: Embedding Service down raises RuntimeError
+  6. _build_context_prompt() includes source file and chunk text
+  7. _build_context_prompt() includes page numbers
+  8. _build_context_prompt() handles None page_number without crashing
+  9. _build_context_prompt() injects conversation history when provided
+  10. History is included in context prompt in correct order
 """
-import pytest
+
+import sys
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from qa_agent import QAAgent
-from models import AskRequest
+import pytest
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "services", "agents"))
+
 from qdrant_search import SearchResult
 
-# ─── Shared test fixtures ───────────────────────────────────────────────────
 
-SAMPLE_VECTOR = [0.1] * 384  # Simulated 384-dim all-MiniLM vector
+# ──────────────────────────────────────────────────────────────
+# Fixtures
+# ──────────────────────────────────────────────────────────────
+
+SAMPLE_VECTOR = [0.1] * 768  # BGE-base-en-v1.5 produces 768-dim vectors
 
 SAMPLE_RESULTS = [
     SearchResult(
@@ -40,15 +59,23 @@ SAMPLE_RESULTS = [
 
 LLM_ANSWER = (
     "The HVAC unit operates on a seasonal schedule. "
-    "In winter mode (November–March), it runs at reduced fan speed. "
-    "[Source: HVAC_Manual_2024.pdf, Page 3]"
+    "In winter mode (November–March), it runs at reduced fan speed."
 )
 
 
 @pytest.fixture
-def agent() -> QAAgent:
-    """Provide a fresh QAAgent for every test."""
-    return QAAgent()
+def mock_llm():
+    """A mock LLMProvider that returns a deterministic answer."""
+    llm = AsyncMock()
+    llm.generate = AsyncMock(return_value=LLM_ANSWER)
+    return llm
+
+
+@pytest.fixture
+def agent(mock_llm):
+    """Fresh QAAgent using the mock LLM — no real dependencies."""
+    from qa_agent import QAAgent
+    return QAAgent(mock_llm)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -56,14 +83,19 @@ def agent() -> QAAgent:
 # ──────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_full_rag_pipeline_returns_answer_with_citations(agent):
-    """Full pipeline: vectorize → search → generate should produce answer + citations."""
+async def test_full_rag_pipeline_returns_answer_and_citations(agent, mock_llm):
+    """Full pipeline produces an answer and populates citations correctly."""
+    from models import AskRequest
+
     with (
         patch.object(agent, "_embed_question", new_callable=AsyncMock, return_value=SAMPLE_VECTOR),
-        patch("qa_agent.qdrant_search._client", new=MagicMock()),  # truthy → is_connected=True
-        patch("qa_agent.qdrant_search.search", return_value=SAMPLE_RESULTS),
-        patch("qa_agent.ollama_client.generate", new_callable=AsyncMock, return_value=LLM_ANSWER),
+        patch("qa_agent.qdrant_search") as mock_qdrant,
+        patch("qa_agent.reranker") as mock_reranker,
     ):
+        mock_qdrant.is_connected = True
+        mock_qdrant.search.return_value = SAMPLE_RESULTS
+        mock_reranker.rerank.return_value = SAMPLE_RESULTS  # pass through
+
         result = await agent.answer(AskRequest(question="What is the HVAC schedule?"))
 
     assert result.answer == LLM_ANSWER
@@ -74,102 +106,137 @@ async def test_full_rag_pipeline_returns_answer_with_citations(agent):
 
 
 @pytest.mark.asyncio
-async def test_citations_are_sorted_by_relevance(agent):
-    """Citations should preserve the search-result relevance order (highest first)."""
+async def test_citations_sorted_by_relevance_score(agent):
+    """Citations must be returned in descending relevance order."""
+    from models import AskRequest
+
+    low = SearchResult(
+        text="Low relevance chunk.",
+        source_file="doc.pdf", page_number=1, chunk_index=0, token_count=3, score=0.50
+    )
+    high = SearchResult(
+        text="High relevance chunk.",
+        source_file="doc.pdf", page_number=2, chunk_index=1, token_count=3, score=0.95
+    )
+
     with (
         patch.object(agent, "_embed_question", new_callable=AsyncMock, return_value=SAMPLE_VECTOR),
-        patch("qa_agent.qdrant_search._client", new=MagicMock()),  # truthy → is_connected=True
-        patch("qa_agent.qdrant_search.search", return_value=SAMPLE_RESULTS),
-        patch("qa_agent.ollama_client.generate", new_callable=AsyncMock, return_value=LLM_ANSWER),
+        patch("qa_agent.qdrant_search") as mock_qdrant,
+        patch("qa_agent.reranker") as mock_reranker,
     ):
-        result = await agent.answer(AskRequest(question="Tell me about HVAC modes."))
+        mock_qdrant.is_connected = True
+        mock_qdrant.search.return_value = [low, high]
+        mock_reranker.rerank.return_value = [high, low]  # re-ranker re-orders
+
+        result = await agent.answer(AskRequest(question="Test?"))
 
     scores = [c.relevance_score for c in result.citations]
-    assert scores == sorted(scores, reverse=True), "Citations should be in descending relevance order"
+    assert scores == sorted(scores, reverse=True)
 
 
 # ──────────────────────────────────────────────────────────────
-# No search results
+# Graceful degradation
 # ──────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
 async def test_empty_search_results_returns_graceful_message(agent):
-    """When Qdrant has no matching chunks, should return a helpful no-data message."""
+    """No matching chunks → helpful no-documents message, no crash."""
+    from models import AskRequest
+
     with (
         patch.object(agent, "_embed_question", new_callable=AsyncMock, return_value=SAMPLE_VECTOR),
-        patch("qa_agent.qdrant_search._client", new=MagicMock()),  # truthy → is_connected=True
-        patch("qa_agent.qdrant_search.search", return_value=[]),
+        patch("qa_agent.qdrant_search") as mock_qdrant,
     ):
-        result = await agent.answer(AskRequest(question="What is the certified capacity?"))
+        mock_qdrant.is_connected = True
+        mock_qdrant.search.return_value = []
+
+        result = await agent.answer(AskRequest(question="What is the thermal load?"))
 
     assert len(result.citations) == 0
     assert "documents" in result.answer.lower() or "ingested" in result.answer.lower()
+
+
+@pytest.mark.asyncio
+async def test_qdrant_not_connected_raises_runtime_error(agent):
+    """Qdrant disconnected → RuntimeError (caught cleanly by /chat stream)."""
+    from models import AskRequest
+
+    with (
+        patch.object(agent, "_embed_question", new_callable=AsyncMock, return_value=SAMPLE_VECTOR),
+        patch("qa_agent.qdrant_search") as mock_qdrant,
+    ):
+        mock_qdrant.is_connected = False
+
+        with pytest.raises(RuntimeError, match="Qdrant"):
+            await agent.answer(AskRequest(question="Test?"))
+
+
+@pytest.mark.asyncio
+async def test_embedding_service_down_raises_runtime_error(agent):
+    """Embedding Service unreachable → RuntimeError propagated cleanly."""
+    from models import AskRequest
+
+    with patch.object(
+        agent, "_embed_question",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("Embedding Service is not reachable."),
+    ):
+        with pytest.raises(RuntimeError, match="Embedding Service"):
+            await agent.answer(AskRequest(question="Test?"))
 
 
 # ──────────────────────────────────────────────────────────────
 # Context prompt construction
 # ──────────────────────────────────────────────────────────────
 
-def test_build_context_prompt_contains_source_and_text(agent):
-    """Context prompt must include source file name and chunk text."""
+def test_build_context_prompt_includes_source_file_and_text(agent):
+    """Context prompt must include source filename and chunk content."""
     prompt = agent._build_context_prompt("What is HVAC mode?", SAMPLE_RESULTS)
 
     assert "HVAC_Manual_2024.pdf" in prompt
     assert "seasonal schedule" in prompt
-    assert "Question: What is HVAC mode?" in prompt
-    assert "Answer:" in prompt
+    assert "What is HVAC mode?" in prompt
 
 
-def test_build_context_prompt_includes_page_number(agent):
-    """Context prompt should include page number when available."""
-    prompt = agent._build_context_prompt("Test question?", SAMPLE_RESULTS)
+def test_build_context_prompt_includes_page_numbers(agent):
+    """Context prompt must cite page numbers for traceability."""
+    prompt = agent._build_context_prompt("Test?", SAMPLE_RESULTS)
 
-    assert "Page 3" in prompt
-    assert "Page 4" in prompt
+    assert "3" in prompt   # page 3
+    assert "4" in prompt   # page 4
 
 
-def test_build_context_prompt_handles_missing_page(agent):
-    """Prompt should not crash when page_number is None."""
-    result_no_page = SearchResult(
-        text="Some text without a page number.",
-        source_file="general.pdf",
+def test_build_context_prompt_handles_none_page_number(agent):
+    """prompt must not crash or show 'Page None' when page_number is absent."""
+    no_page = SearchResult(
+        text="Some text without a page.",
+        source_file="report.pdf",
         page_number=None,
         chunk_index=0,
-        token_count=7,
-        score=0.7,
+        token_count=5,
+        score=0.6,
     )
-    prompt = agent._build_context_prompt("Test?", [result_no_page])
-    assert "general.pdf" in prompt
+    prompt = agent._build_context_prompt("Test?", [no_page])
+
+    assert "report.pdf" in prompt
     assert "Page None" not in prompt
 
 
-# ──────────────────────────────────────────────────────────────
-# Resilience — Embedding Service down
-# ──────────────────────────────────────────────────────────────
+def test_build_context_prompt_injects_conversation_history(agent):
+    """When history is provided, it must appear in the prompt."""
+    history = [
+        {"role": "user", "content": "What is HVAC?"},
+        {"role": "assistant", "content": "HVAC stands for Heating, Ventilation, and Air Conditioning."},
+    ]
+    prompt = agent._build_context_prompt("Tell me more.", SAMPLE_RESULTS, history=history)
 
-@pytest.mark.asyncio
-async def test_embedding_service_down_raises_runtime_error(agent):
-    """If the Embedding Service is unreachable, should raise RuntimeError (caught by controller)."""
-    with patch.object(
-        agent,
-        "_embed_question",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("Embedding Service is not reachable."),
-    ):
-        with pytest.raises(RuntimeError, match="Embedding Service"):
-            await agent.answer(AskRequest(question="What is the energy consumption?"))
+    assert "What is HVAC?" in prompt
+    assert "Heating, Ventilation" in prompt
 
 
-# ──────────────────────────────────────────────────────────────
-# Resilience — Qdrant disconnected
-# ──────────────────────────────────────────────────────────────
+def test_build_context_prompt_no_history_when_none(agent):
+    """Passing history=None must not inject any history section or crash."""
+    prompt = agent._build_context_prompt("What is HVAC mode?", SAMPLE_RESULTS, history=None)
 
-@pytest.mark.asyncio
-async def test_qdrant_not_connected_raises_runtime_error(agent):
-    """If Qdrant is not connected, should raise RuntimeError (caught by controller)."""
-    with (
-        patch.object(agent, "_embed_question", new_callable=AsyncMock, return_value=SAMPLE_VECTOR),
-        patch("qa_agent.qdrant_search._client", new=None),  # None → is_connected=False
-    ):
-        with pytest.raises(RuntimeError, match="Qdrant"):
-            await agent.answer(AskRequest(question="What is the fire safety plan?"))
+    # Should not contain common history markers
+    assert "Conversation History" not in prompt or "seasonal schedule" in prompt

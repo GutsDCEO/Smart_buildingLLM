@@ -1,8 +1,11 @@
 """
 Embedding Engine — converts text chunks into vector embeddings.
 
-Uses sentence-transformers (all-MiniLM-L6-v2) locally on CPU.
+Uses sentence-transformers (BAAI/bge-base-en-v1.5) locally on CPU.
 The model is loaded once at startup (singleton) for efficiency.
+
+BGE models require an instruction prefix for optimal retrieval quality.
+See: https://huggingface.co/BAAI/bge-base-en-v1.5
 
 Design:
   - SRP: Only handles text → vector conversion.
@@ -18,6 +21,10 @@ from sentence_transformers import SentenceTransformer
 from config import settings
 
 logger = logging.getLogger(__name__)
+
+# BGE models perform best with an instruction prefix for retrieval tasks.
+# This prefix is prepended to each text before encoding.
+_BGE_INSTRUCTION_PREFIX = "Represent this sentence: "
 
 
 class Embedder:
@@ -52,6 +59,9 @@ class Embedder:
         """
         Convert a batch of texts into vector embeddings.
 
+        For BGE models, prepends the instruction prefix to each text
+        for optimal retrieval quality.
+
         Args:
             texts: List of text strings to embed.
 
@@ -69,6 +79,11 @@ class Embedder:
         if not texts:
             logger.warning("Empty text list provided for embedding.")
             return []
+
+        # Add BGE instruction prefix if using a BGE model
+        model_name = settings.embedding_model_name.lower()
+        if "bge" in model_name:
+            texts = [f"{_BGE_INSTRUCTION_PREFIX}{t}" for t in texts]
 
         logger.info("Embedding %d text(s)...", len(texts))
         embeddings = self._model.encode(

@@ -195,7 +195,7 @@ def _build_chunk(
     original_text: str,
 ) -> TextChunk:
     """Create a TextChunk from a list of sentences."""
-    text = " ".join(sentences)
+    text = "\n".join(sentences)
     token_count = _count_tokens(text)
 
     # Find character offsets in the original text

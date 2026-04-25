@@ -1,8 +1,7 @@
 # ============================================================
 # Agents Service — Python Dependencies
 # ============================================================
-# Lightweight: NO torch or sentence-transformers.
-# Query embedding is delegated to the Embedding Service via HTTP.
+# Re-ranker model runs locally (CPU). LLM calls are remote (Groq).
 # ============================================================
 
 # --- Web Framework ---
@@ -12,16 +11,21 @@ python-multipart>=0.0.9
 
 # --- Configuration ---
 pydantic-settings>=2.1.0
+pyyaml>=6.0.1
 
-# --- HTTP Client (Ollama + Embedding Service calls) ---
+# --- HTTP Client (Groq / Ollama / Embedding Service calls) ---
 httpx>=0.27.0
 
 # --- Vector DB (read-only search) ---
 qdrant-client>=1.15.0
 
-# --- Async PostgreSQL (optional audit logging) ---
+# --- Re-Ranker (cross-encoder for precision filtering) ---
+sentence-transformers>=2.6.0
+
+# --- Async PostgreSQL (persistence) ---
 asyncpg>=0.30.0
 
 # --- Testing (Quality Sentinel ②) ---
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
+

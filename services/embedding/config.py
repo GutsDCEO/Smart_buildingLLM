@@ -12,13 +12,13 @@ class EmbeddingSettings(BaseSettings):
     """Embedding service configuration from environment variables."""
 
     # --- Embedding Model ---
-    embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_model_name: str = "BAAI/bge-base-en-v1.5"
 
     # --- Qdrant ---
     qdrant_host: str = "qdrant"
     qdrant_port: int = 6333
     qdrant_collection_name: str = "smart_building_docs"
-    qdrant_vector_size: int = 384  # all-MiniLM-L6-v2 output dimension
+    qdrant_vector_size: int = 768  # BAAI/bge-base-en-v1.5 output dimension
 
     # --- PostgreSQL ---
     postgres_user: str = "smartbuilding"

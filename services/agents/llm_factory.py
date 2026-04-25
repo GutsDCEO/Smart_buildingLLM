@@ -1,31 +1,41 @@
 """
-LLM Factory — returns the correct LLM client based on the LLM_PROVIDER env var.
+LLM Factory — Returns the correct LLM client based on configuration.
 
 Design:
-  - OCP: Adding a new provider (e.g., OpenAI) requires one new elif here only.
-  - DIP: All callers receive a duck-typed object — never a concrete class.
-  - Fail-Fast: Misconfiguration (missing API key) raises at startup, not at query time.
+  - OCP: Adding a new provider requires only one new elif block here.
+  - DIP: Returns LLMProvider interface — callers never know the concrete type.
+  - Fail-Fast: Misconfiguration raises at startup, not at query time.
+  - ISP: Factory only creates clients — no other responsibilities.
+
+Supported providers:
+  - "groq"   → GroqClient  (Groq Cloud API — DeepSeek R1, Llama, etc.)
+  - "ollama" → OllamaClient (Local LLM engine)
+
+To add a new provider (e.g., OpenAI, Anthropic):
+  1. Create a new client class implementing LLMProvider ABC
+  2. Add an elif block below
+  3. Add config fields to AgentsSettings
+  That's it — zero changes to qa_agent, router, or main.py.
 """
 
 import logging
 
 from config import settings
+from llm_interface import LLMProvider
 
 logger = logging.getLogger(__name__)
 
 
-def create_llm_client():
+def create_llm_client() -> LLMProvider:
     """
     Instantiate and return the LLM client for the configured provider.
 
     Returns:
-        An object with the interface: startup(), shutdown(), generate(),
-        generate_stream(), is_reachable() — matching both OllamaClient
-        and GroqClient.
+        An LLMProvider implementation matching the LLM_PROVIDER env var.
 
     Raises:
-        RuntimeError: If provider is unknown, or if Groq is selected
-                      but GROQ_API_KEY is not set.
+        RuntimeError: If provider is unknown, or if required credentials
+                      are missing (fail-fast at startup).
     """
     provider = settings.llm_provider.strip().lower()
 
@@ -57,5 +67,5 @@ def create_llm_client():
     else:
         raise RuntimeError(
             f"Unknown LLM_PROVIDER='{provider}'. "
-            "Expected 'ollama' or 'groq'. Check your .env file."
+            "Supported: 'groq', 'ollama'. Check your .env file."
         )

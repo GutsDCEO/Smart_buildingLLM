@@ -14,6 +14,7 @@ import json
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 from fastapi import FastAPI, HTTPException, Query, UploadFile, File
@@ -31,7 +32,9 @@ from models import (
 )
 from guardrail_agent import GuardrailAgent
 from router_agent import RouterAgent
-from qa_agent import QAAgent, _QA_SYSTEM_PROMPT
+from qa_agent import QAAgent
+from domain_config import domain_config
+from reranker import reranker
 from llm_factory import create_llm_client
 from qdrant_search import qdrant_search
 from ingestion_gateway import ingestion_gateway
@@ -81,12 +84,22 @@ async def lifespan(app: FastAPI):
     logger.info("LLM Provider Active: %s", settings.llm_provider)
     logger.info("Client Instance: %s", type(llm_client).__name__)
 
+    # Load the re-ranker cross-encoder model
+    try:
+        reranker.load_model()
+    except Exception as exc:
+        logger.warning("Reranker not available: %s (will use raw results)", exc)
+
     # Initialize Agents with the unified LLM client
     guardrail_agent = GuardrailAgent()
     router_agent = RouterAgent(llm_client)
     qa_agent = QAAgent(llm_client)
 
-    logger.info("Agents Service ready.")
+    logger.info(
+        "Agents Service ready. Domain: '%s' v%s",
+        domain_config.name,
+        domain_config.version,
+    )
     yield
 
     # Shutdown: close connection pools
@@ -214,8 +227,14 @@ async def ask(request: AskRequest) -> AskResponse:
 async def ingest(file: UploadFile = File(...)) -> IngestResponse:
     """
     Unified ingestion endpoint. Receives a file from the UI,
+    saves it to the /data/ingest folder (to maintain sync integrity),
     forwards it to the Ingestion Service (:8001), then passes
     the chunks to the Embedding Service (:8002) for vector storage.
+
+    Order of operations:
+      1. Save file to /data/ingest FIRST — so Sync never sees it as a ghost.
+      2. Send to Ingestion + Embedding services.
+      3. Record in PostgreSQL.
 
     Raises:
       400: If no file is provided.
@@ -228,14 +247,26 @@ async def ingest(file: UploadFile = File(...)) -> IngestResponse:
     try:
         content = await file.read()
         mime_type = file.content_type or "application/octet-stream"
-        
+
+        # ── Step 1: Persist to /data/ingest BEFORE touching the DB ──────────
+        # This ensures that any immediately-following /sync call finds the file
+        # in the folder and does NOT prune it as a ghost.
+        ingest_path = Path(settings.ingest_folder) / file.filename
+        try:
+            ingest_path.write_bytes(content)
+            logger.info("Saved uploaded file to '%s' (%d bytes).", ingest_path, len(content))
+        except OSError as save_err:
+            # Non-fatal: log and continue — ingestion can still succeed.
+            logger.error("Could not save '%s' to ingest folder: %s", file.filename, save_err)
+
+        # ── Step 2: Extract text + embed vectors ─────────────────────────────
         result = await ingestion_gateway.ingest_file(
             filename=file.filename,
             file_contents=content,
             content_type=mime_type,
         )
 
-        # Record document metadata in PostgreSQL for the Knowledge Base
+        # ── Step 3: Record metadata in PostgreSQL ────────────────────────────
         await document_service.record_document(
             filename=file.filename,
             chunk_count=result.chunks_stored,
@@ -269,7 +300,11 @@ def _sse_event(event: str, data: dict | list | str) -> str:
     return f"event: {event}\ndata: {payload}\n\n"
 
 
-async def _chat_stream(question: str, session_id: str = "default-session") -> AsyncGenerator[str, None]:
+async def _chat_stream(
+    question: str,
+    session_id: str = "default-session",
+    enable_thinking: bool = False,
+) -> AsyncGenerator[str, None]:
     """
     The core SSE generator: runs Guard → Route → Q&A pipeline.
 
@@ -281,6 +316,7 @@ async def _chat_stream(question: str, session_id: str = "default-session") -> As
     Args:
         question: The user's question.
         session_id: The session ID for history persistence.
+        enable_thinking: If True, activates Qwen3 CoT reasoning mode.
     """
     accumulated_answer = ""
     try:
@@ -307,9 +343,7 @@ async def _chat_stream(question: str, session_id: str = "default-session") -> As
         if route_result.intent == IntentType.OUT_OF_SCOPE:
             logger.info("Chat out_of_scope: %s", sanitized[:60])
             yield _sse_event("token", {
-                "text": "I can only help with Smart Building topics such as HVAC, "
-                        "maintenance, equipment, and facilities management. "
-                        "Please rephrase your question within this domain.",
+                "text": domain_config.out_of_scope_message,
             })
             yield _sse_event("done", {
                 "answered_at": datetime.now(timezone.utc).isoformat(),
@@ -317,7 +351,7 @@ async def _chat_stream(question: str, session_id: str = "default-session") -> As
             })
             return
 
-        # ── Stage 3: Vector Search ──
+        # ── Stage 3: Vector Search + Re-Rank ──
         yield _sse_event("status", {"stage": "retrieval", "message": "Searching documents..."})
 
         # Embed the question via Embedding Service
@@ -331,7 +365,10 @@ async def _chat_stream(question: str, session_id: str = "default-session") -> As
             yield _sse_event("done", {"answered_at": datetime.now(timezone.utc).isoformat()})
             return
 
-        results = qdrant_search.search(query_vector)
+        results = qdrant_search.search(
+            query_vector,
+            top_k=domain_config.retrieval.top_k_retrieval,
+        )
 
         if not results:
             yield _sse_event("token", {
@@ -342,10 +379,30 @@ async def _chat_stream(question: str, session_id: str = "default-session") -> As
             yield _sse_event("done", {"answered_at": datetime.now(timezone.utc).isoformat()})
             return
 
-        # ── Stage 4: Stream LLM Answer ──
+        # Re-rank for precision
+        yield _sse_event("status", {"stage": "reranking", "message": "Re-ranking results..."})
+        reranked = reranker.rerank(
+            question=sanitized,
+            results=results,
+            top_n=domain_config.retrieval.top_n_reranked,
+        )
+
+        # ── Stage 4: Load conversation history ──
+        history = await history_service.get_recent_messages(
+            session_id,
+            limit=domain_config.memory.max_history_turns * 2,
+        )
+        history_dicts = [
+            {"role": msg["role"], "content": msg["content"]}
+            for msg in history
+        ] if history else None
+
+        # ── Stage 5: Stream LLM Answer ──
         yield _sse_event("status", {"stage": "generating", "message": "Generating answer..."})
 
-        context_prompt = qa_agent._build_context_prompt(sanitized, results)
+        context_prompt = QAAgent._build_context_prompt(
+            sanitized, reranked, history=history_dicts,
+        )
         citations = [
             {
                 "source_file": r.source_file,
@@ -353,14 +410,15 @@ async def _chat_stream(question: str, session_id: str = "default-session") -> As
                 "chunk_index": r.chunk_index,
                 "relevance_score": round(r.score, 4),
             }
-            for r in results
+            for r in reranked
         ]
 
-        # Stream tokens from LLM one-by-one (works for both Groq and Ollama)
+        # Stream tokens from LLM (works for both Groq and Ollama)
         async for token in llm_client.generate_stream(
             prompt=context_prompt,
-            system_prompt=_QA_SYSTEM_PROMPT,
+            system_prompt=domain_config.qa_system_prompt,
             temperature=0.2,
+            enable_thinking=enable_thinking,
         ):
             accumulated_answer += token
             yield _sse_event("token", {"text": token})
@@ -423,7 +481,7 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     await history_service.save_message(session_id, "user", request.question)
 
     return StreamingResponse(
-        _chat_stream(request.question, session_id),
+        _chat_stream(request.question, session_id, request.enable_thinking),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -490,6 +548,34 @@ async def delete_document(doc_id: int):
 
 
 # ──────────────────────────────────────────────────────────────
+# /sessions — Multi-Conversation Management (Phase 5)
+# ──────────────────────────────────────────────────────────────
+
+@app.get("/sessions", tags=["Chat"])
+async def list_sessions():
+    """
+    List all chat sessions with their auto-numbered titles and last activity.
+
+    Returns:
+      A list of sessions: [{session_id, title, last_active, message_count}]
+    """
+    sessions = await history_service.list_sessions()
+    return {"sessions": sessions}
+
+
+@app.delete("/sessions/{session_id}", tags=["Chat"])
+async def delete_session(session_id: str):
+    """
+    Delete a conversation and all its messages permanently.
+
+    Returns:
+      Number of messages deleted.
+    """
+    count = await history_service.clear_history(session_id)
+    return {"session_id": session_id, "messages_deleted": count}
+
+
+# ──────────────────────────────────────────────────────────────
 # /history — Chat History Persistence (Phase 4)
 # ──────────────────────────────────────────────────────────────
 
@@ -513,22 +599,24 @@ async def get_history(session_id: str):
 @app.post("/sync", tags=["Knowledge Base"])
 async def sync_folder():
     """
-    Scan the local /data/ingest folder and ingest any new documents.
+    Synchronize the local /data/ingest folder with the AI's Knowledge Base.
 
-    This is idempotent: files already tracked in the documents table
-    are skipped. Only genuinely new files trigger the ingestion pipeline.
+    This operation is intelligent:
+      - Adds new files.
+      - Updates existing files if their size changed.
+      - Removes files from the AI if they were deleted from the folder.
 
     Returns:
       A summary with counts of files found, skipped, ingested, and failed.
     """
-    # Fetch existing filenames to enable idempotency check
+    # Fetch all existing documents (active ones)
     existing_docs = await document_service.list_documents()
-    existing_filenames = {doc["filename"] for doc in existing_docs}
 
     result = await sync_service.sync_ingest_folder(
         ingestion_gateway=ingestion_gateway,
-        existing_filenames=existing_filenames,
+        existing_docs=existing_docs,
         on_ingested=document_service.record_document,
+        on_deleted=delete_document,  # Use the local delete_document logic for Qdrant cleanup
     )
 
     return {

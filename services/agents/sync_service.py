@@ -41,20 +41,26 @@ class SyncResult:
 
 async def sync_ingest_folder(
     ingestion_gateway,
-    existing_filenames: set[str],
+    existing_docs: list[dict],
     on_ingested=None,
+    on_deleted=None,
 ) -> SyncResult:
     """
-    Scan the local ingest folder and ingest files not already tracked.
+    Synchronize the local ingest folder with the document database.
+
+    Features:
+      - Addition: Ingests new files.
+      - Modification: Re-ingests files if the size has changed.
+      - Pruning: Marks documents as 'deleted' if they are missing from the folder.
 
     Args:
-        ingestion_gateway: The IngestionGateway instance for forwarding files.
-        existing_filenames: Set of filenames already recorded in the documents table.
-        on_ingested: Optional async callable(filename, chunk_count, file_size_bytes)
-                     called after each successful ingestion to record the document.
+        ingestion_gateway: The IngestionGateway instance.
+        existing_docs: List of document records from Postgres (id, filename, file_size_bytes).
+        on_ingested: Async callback(filename, chunk_count, file_size_bytes) for new/updated docs.
+        on_deleted: Async callback(doc_id) to mark a missing file as deleted.
 
     Returns:
-        A SyncResult summarizing what was found and processed.
+        A SyncResult summarizing the operation.
     """
     result = SyncResult()
     ingest_path = Path(settings.ingest_folder)
@@ -64,41 +70,36 @@ async def sync_ingest_folder(
         result.errors.append(f"Ingest folder not found: {ingest_path}")
         return result
 
-    # Collect all supported files from the ingest folder (non-recursive)
-    candidate_files = [
-        f for f in ingest_path.iterdir()
+    # 1. Map existing docs for quick lookup
+    # Only track files that originated from the ingest folder (simulated by checking if we have them)
+    db_files = {doc["filename"]: doc for doc in existing_docs}
+
+    # 2. Collect files currently in the folder
+    folder_files = {
+        f.name: f for f in ingest_path.iterdir()
         if f.is_file() and f.suffix.lower() in SUPPORTED_EXTENSIONS
-    ]
-    result.total_files_found = len(candidate_files)
+    }
+    result.total_files_found = len(folder_files)
 
-    logger.info(
-        "Sync: found %d supported file(s) in '%s'.",
-        result.total_files_found,
-        ingest_path,
-    )
+    # 3. Identify files to ingest or update
+    for filename, file_path in folder_files.items():
+        db_record = db_files.get(filename)
+        current_size = file_path.stat().st_size
 
-    for file_path in candidate_files:
-        filename = file_path.name
+        # Idempotency / Update check
+        if db_record:
+            if db_record.get("file_size_bytes") == current_size:
+                logger.debug("Sync: skipping unchanged '%s'.", filename)
+                result.already_indexed += 1
+                continue
+            else:
+                logger.info("Sync: detected modification in '%s' (%d -> %d bytes). Re-ingesting...", 
+                            filename, db_record.get("file_size_bytes", 0), current_size)
 
-        # --- Idempotency check ---
-        if filename in existing_filenames:
-            logger.debug("Sync: skipping already-indexed '%s'.", filename)
-            result.already_indexed += 1
-            continue
-
-        # --- OWASP A03: Path traversal guard ---
-        resolved = file_path.resolve()
-        if not str(resolved).startswith(str(ingest_path.resolve())):
-            logger.warning("Sync: rejected suspicious path '%s'.", file_path)
-            result.failed += 1
-            result.errors.append(f"Rejected path: {filename}")
-            continue
-
-        # --- Ingest the new file ---
+        # Ingest the file
         try:
             mime = MIME_TYPE_MAP.get(file_path.suffix.lower(), "application/octet-stream")
-            file_bytes = resolved.read_bytes()
-            file_size = resolved.stat().st_size
+            file_bytes = file_path.read_bytes()
 
             ingest_response = await ingestion_gateway.ingest_file(
                 filename=filename,
@@ -106,32 +107,29 @@ async def sync_ingest_folder(
                 content_type=mime,
             )
 
-            logger.info(
-                "Sync: ingested '%s' → %d chunks stored.",
-                filename,
-                ingest_response.chunks_stored,
-            )
-
-            # Record in Postgres via the injected callback (DIP)
             if on_ingested is not None:
                 await on_ingested(
                     filename=filename,
                     chunk_count=ingest_response.chunks_stored,
-                    file_size_bytes=file_size,
+                    file_size_bytes=current_size,
                 )
 
             result.newly_ingested += 1
+            logger.info("Sync: successfully processed '%s'.", filename)
 
         except Exception as exc:
             logger.error("Sync: failed to ingest '%s': %s", filename, exc)
             result.failed += 1
             result.errors.append(f"{filename}: {exc}")
 
-    logger.info(
-        "Sync complete — found=%d, skipped=%d, ingested=%d, failed=%d",
-        result.total_files_found,
-        result.already_indexed,
-        result.newly_ingested,
-        result.failed,
-    )
+    # 4. Pruning: Mark files missing from folder as deleted
+    if on_deleted:
+        for filename, db_record in db_files.items():
+            if filename not in folder_files:
+                logger.info("Sync: pruning ghost file '%s' (id=%d) from AI.", filename, db_record["id"])
+                try:
+                    await on_deleted(db_record["id"])
+                except Exception as exc:
+                    logger.error("Sync: failed to prune '%s': %s", filename, exc)
+
     return result

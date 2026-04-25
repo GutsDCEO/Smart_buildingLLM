@@ -3,70 +3,74 @@ Q&A Agent — The core RAG pipeline that answers user questions with citations.
 
 Design:
   - SRP: Only handles question → answer flow. No validation or routing.
-  - Reuses Embedding Service /vectorize via HTTP (DIP: no local model).
-  - Builds context-stuffed prompts with source metadata for citations.
-  - OWASP A09: All errors are logged but never leak internals to the caller.
+  - DIP: Depends on LLMProvider interface and domain_config abstraction.
+  - OCP: New retrieval strategies (hybrid search, etc.) can be added
+         without modifying existing code paths.
+
+Pipeline:
+  1. Embed the user question via Embedding Service /vectorize
+  2. Over-retrieve top-K chunks from Qdrant (K=15)
+  3. Re-rank with cross-encoder to keep top-N (N=5)
+  4. Build a context-stuffed prompt with conversation history
+  5. Generate a cited answer via the LLM provider
+  6. Return AskResponse with answer and citations
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 import httpx
 
-from typing import Any
 from config import settings
+from domain_config import domain_config
+from llm_interface import LLMProvider
 from models import AskRequest, AskResponse, Citation
 from qdrant_search import qdrant_search, SearchResult
+from reranker import reranker
 
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────
-# System Prompt — Citation-Aware Answering
-# ──────────────────────────────────────────────────────────────
-
-_QA_SYSTEM_PROMPT = """You are a Smart Building AI assistant. Your job is to answer questions \
-about buildings, HVAC systems, maintenance, equipment, facilities management, and related topics.
-
-CRITICAL RULES:
-1. ONLY use the provided context to answer. Do NOT use general knowledge.
-2. If the context does not contain enough information, say exactly:
-   "I don't have enough information in the available documents to answer this question."
-3. ALWAYS cite your sources using the format: [Source: filename, Page X]
-4. Be precise and technical. Building professionals rely on your accuracy.
-5. If multiple sources agree, cite the most relevant one.
-6. Keep answers concise but complete."""
-
 
 class QAAgent:
-    """Answers user questions using RAG: vectorize → search → generate."""
+    """Answers user questions using RAG: embed → search → rerank → generate."""
 
-    def __init__(self, llm_client: Any):
-        self.llm_client = llm_client
+    def __init__(self, llm_client: LLMProvider) -> None:
+        self._llm = llm_client
 
-    async def answer(self, request: AskRequest) -> AskResponse:
+    async def answer(
+        self,
+        request: AskRequest,
+        conversation_history: Optional[list[dict]] = None,
+    ) -> AskResponse:
         """
-        Full RAG pipeline:
-          1. Vectorize the user question via Embedding Service /vectorize
-          2. Search Qdrant for the top-K most relevant chunks
-          3. Build a context-stuffed prompt
-          4. Call Ollama to generate a cited answer
-          5. Return AskResponse with answer and citations
+        Full RAG pipeline with re-ranking and conversation memory.
+
+        Args:
+            request: The user question.
+            conversation_history: Optional list of previous messages
+                                  [{"role": "user"|"assistant", "content": "..."}]
+
+        Returns:
+            AskResponse with answer and citations.
 
         Raises:
-            RuntimeError: If the Embedding Service or Ollama is unreachable.
-            HTTPException (503): If Qdrant has no results.
+            RuntimeError: If Embedding Service or LLM is unreachable.
         """
         question = request.question
 
         # --- Step 1: Vectorize via Embedding Service ---
         query_vector = await self._embed_question(question)
 
-        # --- Step 2: Search Qdrant ---
+        # --- Step 2: Over-retrieve from Qdrant ---
         if not qdrant_search.is_connected:
             raise RuntimeError("Qdrant search client is not connected.")
 
-        results = qdrant_search.search(query_vector)
+        results = qdrant_search.search(
+            query_vector,
+            top_k=domain_config.retrieval.top_k_retrieval,
+        )
 
         if not results:
             logger.warning("No search results for: %.80s", question)
@@ -78,18 +82,29 @@ class QAAgent:
                 citations=[],
             )
 
-        # --- Step 3: Build context prompt ---
-        context_prompt = self._build_context_prompt(question, results)
+        # --- Step 3: Re-rank for precision ---
+        reranked_results = reranker.rerank(
+            question=question,
+            results=results,
+            top_n=domain_config.retrieval.top_n_reranked,
+        )
 
-        # --- Step 4: Generate answer via injected LLM client ---
-        raw_answer = await self.llm_client.generate(
+        # --- Step 4: Build context prompt with history ---
+        context_prompt = self._build_context_prompt(
+            question=question,
+            results=reranked_results,
+            history=conversation_history,
+        )
+
+        # --- Step 5: Generate answer via LLM ---
+        raw_answer = await self._llm.generate(
             prompt=context_prompt,
-            system_prompt=_QA_SYSTEM_PROMPT,
+            system_prompt=domain_config.qa_system_prompt,
             temperature=0.2,  # Low = factual, deterministic
         )
 
-        # --- Step 5: Build citations ---
-        citations = self._build_citations(results)
+        # --- Step 6: Build citations ---
+        citations = self._build_citations(reranked_results)
 
         logger.info(
             "Q&A complete for '%s' — %d citations, answer=%d chars",
@@ -99,6 +114,57 @@ class QAAgent:
         )
 
         return AskResponse(answer=raw_answer, citations=citations)
+
+    async def answer_stream(
+        self,
+        request: AskRequest,
+        conversation_history: Optional[list[dict]] = None,
+    ):
+        """
+        Streaming version of the RAG pipeline. Yields tokens for SSE.
+
+        Returns a tuple of (token_generator, citations) so the caller
+        can emit citations after the stream completes.
+        """
+        question = request.question
+
+        # Steps 1-3: same as non-streaming
+        query_vector = await self._embed_question(question)
+
+        if not qdrant_search.is_connected:
+            raise RuntimeError("Qdrant search client is not connected.")
+
+        results = qdrant_search.search(
+            query_vector,
+            top_k=domain_config.retrieval.top_k_retrieval,
+        )
+
+        if not results:
+            return None, []
+
+        reranked_results = reranker.rerank(
+            question=question,
+            results=results,
+            top_n=domain_config.retrieval.top_n_reranked,
+        )
+
+        context_prompt = self._build_context_prompt(
+            question=question,
+            results=reranked_results,
+            history=conversation_history,
+        )
+
+        citations = self._build_citations(reranked_results)
+
+        token_generator = self._llm.generate_stream(
+            prompt=context_prompt,
+            system_prompt=domain_config.qa_system_prompt,
+            temperature=0.2,
+        )
+
+        return token_generator, citations
+
+    # ── Private Helpers ──────────────────────────────────────
 
     async def _embed_question(self, question: str) -> list[float]:
         """
@@ -132,12 +198,21 @@ class QAAgent:
         return vector
 
     @staticmethod
-    def _build_context_prompt(question: str, results: list[SearchResult]) -> str:
+    def _build_context_prompt(
+        question: str,
+        results: list[SearchResult],
+        history: Optional[list[dict]] = None,
+    ) -> str:
         """
-        Build a context-stuffed prompt from Qdrant search results.
+        Build a context-stuffed prompt from re-ranked search results
+        and optional conversation history.
 
-        Format example:
-          [Source: HVAC_Manual.pdf, Page 3] (Relevance: 0.89)
+        Format:
+          [Conversation History]
+          User: ...
+          Assistant: ...
+          ---
+          [Source: file.pdf, Page 3] (Relevance: 0.89)
           <chunk text>
           ---
           Question: ...
@@ -145,6 +220,24 @@ class QAAgent:
         """
         parts: list[str] = []
 
+        # Include conversation history for multi-turn context
+        if history:
+            max_turns = domain_config.memory.max_history_turns
+            recent = history[-max_turns * 2:]  # Each turn = user + assistant
+            history_lines = []
+            for msg in recent:
+                role = msg.get("role", "user").capitalize()
+                content = msg.get("content", "")
+                history_lines.append(f"{role}: {content}")
+
+            if history_lines:
+                parts.append(
+                    "Previous conversation:\n" + "\n".join(history_lines)
+                )
+                parts.append("---")
+
+        # Add document context
+        parts.append("Context from documents:\n")
         for result in results:
             page_info = f", Page {result.page_number}" if result.page_number else ""
             header = f"[Source: {result.source_file}{page_info}] (Relevance: {result.score:.2f})"
@@ -153,7 +246,7 @@ class QAAgent:
         context_block = "\n---\n".join(parts)
 
         return (
-            f"Context from documents:\n\n{context_block}\n\n"
+            f"{context_block}\n\n"
             f"---\n\n"
             f"Question: {question}\n\n"
             f"Answer:"
@@ -171,5 +264,3 @@ class QAAgent:
             )
             for r in results
         ]
-
-
