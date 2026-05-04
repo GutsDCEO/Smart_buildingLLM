@@ -4,6 +4,7 @@ History Service — Chat message persistence for conversation replay.
 Design:
   - SRP: Only handles message CRUD. No streaming or LLM logic.
   - DIP: Depends on database.get_pool() abstraction.
+  - OWASP A01: Session isolation — users can only see their own messages.
   - OWASP A03: All queries use parameterized statements.
 """
 
@@ -22,6 +23,7 @@ async def save_message(
     session_id: str,
     role: str,
     content: str,
+    user_id: Optional[int] = None,
 ) -> Optional[int]:
     """
     Persist a single chat message to PostgreSQL.
@@ -30,6 +32,7 @@ async def save_message(
         session_id: Client-generated session identifier.
         role: Either 'user' or 'assistant'.
         content: The message text.
+        user_id: The authenticated user's ID (for session isolation).
 
     Returns:
         The message ID, or None if the database is unavailable.
@@ -43,13 +46,14 @@ async def save_message(
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO messages (session_id, role, content, created_at)
-                VALUES ($1, $2, $3, $4)
+                INSERT INTO messages (session_id, role, content, user_id, created_at)
+                VALUES ($1, $2, $3, $4, $5)
                 RETURNING id
                 """,
                 session_id,
                 role,
                 content,
+                user_id,
                 datetime.now(timezone.utc),
             )
             return row["id"]
@@ -59,13 +63,19 @@ async def save_message(
         return None
 
 
-async def get_history(session_id: str, limit: int = 50) -> list[dict]:
+async def get_history(
+    session_id: str,
+    limit: int = 50,
+    user_id: Optional[int] = None,
+) -> list[dict]:
     """
     Retrieve chat history for a session, ordered chronologically.
 
     Args:
         session_id: The session to retrieve messages for.
         limit: Maximum number of messages to return.
+        user_id: If provided, only return messages belonging to this user
+                 (OWASP A01: session isolation).
 
     Returns:
         A list of message dicts with id, role, content, created_at.
@@ -76,17 +86,32 @@ async def get_history(session_id: str, limit: int = 50) -> list[dict]:
 
     try:
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT id, role, content, created_at
-                FROM messages
-                WHERE session_id = $1
-                ORDER BY created_at ASC
-                LIMIT $2
-                """,
-                session_id,
-                limit,
-            )
+            if user_id is not None:
+                rows = await conn.fetch(
+                    """
+                    SELECT id, role, content, created_at
+                    FROM messages
+                    WHERE session_id = $1 AND user_id = $2
+                    ORDER BY created_at ASC
+                    LIMIT $3
+                    """,
+                    session_id,
+                    user_id,
+                    limit,
+                )
+            else:
+                # Backward compatibility: if no user_id, return all messages
+                rows = await conn.fetch(
+                    """
+                    SELECT id, role, content, created_at
+                    FROM messages
+                    WHERE session_id = $1
+                    ORDER BY created_at ASC
+                    LIMIT $2
+                    """,
+                    session_id,
+                    limit,
+                )
 
         return [
             {
@@ -103,9 +128,17 @@ async def get_history(session_id: str, limit: int = 50) -> list[dict]:
         return []
 
 
-async def clear_history(session_id: str) -> int:
+async def clear_history(
+    session_id: str,
+    user_id: Optional[int] = None,
+) -> int:
     """
     Delete all messages for a given session.
+
+    Args:
+        session_id: The session to clear.
+        user_id: If provided, only delete messages belonging to this user
+                 (OWASP A01: prevents cross-user deletion).
 
     Returns:
         Number of messages deleted.
@@ -116,10 +149,17 @@ async def clear_history(session_id: str) -> int:
 
     try:
         async with pool.acquire() as conn:
-            result = await conn.execute(
-                "DELETE FROM messages WHERE session_id = $1",
-                session_id,
-            )
+            if user_id is not None:
+                result = await conn.execute(
+                    "DELETE FROM messages WHERE session_id = $1 AND user_id = $2",
+                    session_id,
+                    user_id,
+                )
+            else:
+                result = await conn.execute(
+                    "DELETE FROM messages WHERE session_id = $1",
+                    session_id,
+                )
             count = int(result.split()[-1])
             logger.info("Cleared %d messages for session '%s'.", count, session_id)
             return count
@@ -174,13 +214,17 @@ async def get_recent_messages(session_id: str, limit: int = 10) -> list[dict]:
         return []
 
 
-async def list_sessions() -> list[dict]:
+async def list_sessions(user_id: Optional[int] = None) -> list[dict]:
     """
-    List all distinct chat sessions with auto-numbered titles and last activity.
+    List distinct chat sessions with auto-numbered titles and last activity.
+
+    Args:
+        user_id: If provided, only return sessions belonging to this user
+                 (OWASP A01: session isolation).
 
     Sessions are ordered by last activity (most recent first).
     Title is auto-generated as 'Chat N' where N is the reverse chronological
-    order index. The user can later rename sessions via a PUT endpoint.
+    order index.
 
     Returns:
         A list of session dicts: {session_id, title, last_active, message_count}
@@ -191,17 +235,32 @@ async def list_sessions() -> list[dict]:
 
     try:
         async with pool.acquire() as conn:
-            rows = await conn.fetch(
-                """
-                SELECT
-                    session_id,
-                    MAX(created_at) AS last_active,
-                    COUNT(*) AS message_count
-                FROM messages
-                GROUP BY session_id
-                ORDER BY MAX(created_at) DESC
-                """
-            )
+            if user_id is not None:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        session_id,
+                        MAX(created_at) AS last_active,
+                        COUNT(*) AS message_count
+                    FROM messages
+                    WHERE user_id = $1
+                    GROUP BY session_id
+                    ORDER BY MAX(created_at) DESC
+                    """,
+                    user_id,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT
+                        session_id,
+                        MAX(created_at) AS last_active,
+                        COUNT(*) AS message_count
+                    FROM messages
+                    GROUP BY session_id
+                    ORDER BY MAX(created_at) DESC
+                    """
+                )
 
         # Auto-number sessions: most recent = Chat 1, second = Chat 2, etc.
         return [

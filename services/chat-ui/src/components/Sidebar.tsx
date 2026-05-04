@@ -1,6 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { authFetch, apiLogout } from "@/lib/auth";
+import type { AuthUser } from "@/lib/auth";
+import { useRouter } from "next/navigation";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003";
+
+// ── Types ─────────────────────────────────────────────────────────
 
 export type SidebarTab = "chat" | "knowledge";
 
@@ -17,9 +24,10 @@ interface SidebarProps {
   activeSessionId: string;
   onSessionSelect: (sessionId: string) => void;
   onNewChat: () => void;
+  user: AuthUser | null;
 }
 
-
+// ── Component ─────────────────────────────────────────────────────
 
 export default function Sidebar({
   activeTab,
@@ -27,16 +35,20 @@ export default function Sidebar({
   activeSessionId,
   onSessionSelect,
   onNewChat,
+  user,
 }: SidebarProps) {
+  const router = useRouter();
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // ── Load sessions ─────────────────────────────────────────────
 
   const loadSessions = useCallback(async () => {
     try {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003"}/sessions`,
-        { cache: "no-store" }
-      );
+      const res = await authFetch(`${API_BASE}/sessions`, { cache: "no-store" });
       if (!res.ok) return;
       const data = await res.json();
       setSessions(data.sessions || []);
@@ -47,27 +59,53 @@ export default function Sidebar({
 
   useEffect(() => {
     loadSessions();
-  }, [loadSessions, activeSessionId]); // Refresh when session changes
+  }, [loadSessions, activeSessionId]);
+
+  // ── Close menu on outside click ───────────────────────────────
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [menuOpen]);
+
+  // ── Handlers ──────────────────────────────────────────────────
 
   const handleDelete = async (e: React.MouseEvent, sessionId: string) => {
-    e.stopPropagation(); // Don't trigger session select
+    e.stopPropagation();
     setDeletingId(sessionId);
     try {
-      await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003"}/sessions/${encodeURIComponent(sessionId)}`,
+      await authFetch(
+        `${API_BASE}/sessions/${encodeURIComponent(sessionId)}`,
         { method: "DELETE" }
       );
       setSessions((prev) => prev.filter((s) => s.session_id !== sessionId));
-      // If we deleted the active session, start a new chat
-      if (sessionId === activeSessionId) {
-        onNewChat();
-      }
+      if (sessionId === activeSessionId) onNewChat();
     } catch {
       // Fail silently
     } finally {
       setDeletingId(null);
     }
   };
+
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    setMenuOpen(false);
+    await apiLogout();
+    router.replace("/login");
+  };
+
+  const handleDocsClick = () => {
+    setMenuOpen(false);
+    onTabChange(activeTab === "knowledge" ? "chat" : "knowledge");
+  };
+
+  // ── Helpers ───────────────────────────────────────────────────
 
   const formatRelativeTime = (isoString: string): string => {
     const date = new Date(isoString);
@@ -80,6 +118,11 @@ export default function Sidebar({
     if (diffHours < 24) return `${diffHours}h ago`;
     return `${Math.floor(diffHours / 24)}d ago`;
   };
+
+  const avatarLetter = (user?.username ?? "?")[0].toUpperCase();
+  const isAdmin = user?.role === "admin";
+
+  // ── Render ────────────────────────────────────────────────────
 
   return (
     <nav className="sidebar" id="main-sidebar">
@@ -96,62 +139,95 @@ export default function Sidebar({
       </button>
 
       {/* Conversation List */}
-      {sessions.length > 0 && (
-        <>
+      <div className="conversation-list">
+        {sessions.length > 0 && (
           <div className="sidebar-section-label">Recent</div>
-          <div className="conversation-list">
-            {sessions.map((session) => (
-              <div
-                key={session.session_id}
-                id={`conv-${session.session_id.slice(-6)}`}
-                className={`conv-item ${session.session_id === activeSessionId ? "conv-item--active" : ""}`}
-                onClick={() => onSessionSelect(session.session_id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(e) => e.key === "Enter" && onSessionSelect(session.session_id)}
-              >
-                <span className="conv-icon">💬</span>
-                <div className="conv-info">
-                  <span className="conv-title">{session.title}</span>
-                  <span className="conv-meta">
-                    {formatRelativeTime(session.last_active)} · {Math.floor(session.message_count / 2)} msg
-                  </span>
-                </div>
-                <button
-                  className="conv-delete"
-                  onClick={(e) => handleDelete(e, session.session_id)}
-                  disabled={deletingId === session.session_id}
-                  title="Delete conversation"
-                  aria-label={`Delete ${session.title}`}
-                >
-                  🗑
-                </button>
-              </div>
-            ))}
+        )}
+        {sessions.map((session) => (
+          <div
+            key={session.session_id}
+            id={`conv-${session.session_id.slice(-6)}`}
+            className={`conv-item ${session.session_id === activeSessionId ? "conv-item--active" : ""}`}
+            onClick={() => onSessionSelect(session.session_id)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => e.key === "Enter" && onSessionSelect(session.session_id)}
+          >
+            <span className="conv-icon">💬</span>
+            <div className="conv-info">
+              <span className="conv-title">{session.title}</span>
+              <span className="conv-meta">
+                {formatRelativeTime(session.last_active)} · {Math.floor(session.message_count / 2)} msg
+              </span>
+            </div>
+            <button
+              className="conv-delete"
+              onClick={(e) => handleDelete(e, session.session_id)}
+              disabled={deletingId === session.session_id}
+              title="Delete conversation"
+              aria-label={`Delete ${session.title}`}
+            >
+              🗑
+            </button>
           </div>
-        </>
-      )}
-
-      {/* Footer Tabs */}
-      <div className="sidebar-footer">
-        <button
-          id="sidebar-tab-chat"
-          className={`sidebar-footer-tab ${activeTab === "chat" ? "sidebar-footer-tab--active" : ""}`}
-          onClick={() => onTabChange("chat")}
-        >
-          <span>💬</span>
-          <span>Chat</span>
-        </button>
-        <button
-          id="sidebar-tab-knowledge"
-          className={`sidebar-footer-tab ${activeTab === "knowledge" ? "sidebar-footer-tab--active" : ""}`}
-          onClick={() => onTabChange("knowledge")}
-        >
-          <span>📚</span>
-          <span>Docs</span>
-        </button>
-        <span className="sidebar-version">v0.5.0</span>
+        ))}
       </div>
+
+      {/* ── Bottom Profile ───────────────────────────────────── */}
+      {user && (
+        <div className="sidebar-profile" ref={menuRef}>
+          {/* Popup Menu (above profile) */}
+          {menuOpen && (
+            <div className="profile-menu" id="profile-menu">
+              <button
+                className="profile-menu-item"
+                id="menu-docs"
+                onClick={handleDocsClick}
+              >
+                <span className="profile-menu-icon">📚</span>
+                <span>Knowledge Base</span>
+                {activeTab === "knowledge" && (
+                  <span className="profile-menu-check">✓</span>
+                )}
+              </button>
+              <div className="profile-menu-divider" />
+              <div className="profile-menu-info">
+                <span className="profile-menu-email">{user.email}</span>
+                <span className={`profile-menu-role profile-menu-role--${user.role}`}>
+                  {isAdmin ? "⚙️ Admin" : "👁 Viewer"}
+                </span>
+              </div>
+              <div className="profile-menu-divider" />
+              <button
+                className="profile-menu-item profile-menu-item--danger"
+                id="menu-logout"
+                onClick={handleLogout}
+                disabled={isLoggingOut}
+              >
+                <span className="profile-menu-icon">↪</span>
+                <span>{isLoggingOut ? "Signing out..." : "Sign out"}</span>
+              </button>
+            </div>
+          )}
+
+          {/* Profile Button */}
+          <button
+            className={`profile-btn ${menuOpen ? "profile-btn--active" : ""}`}
+            id="profile-btn"
+            onClick={() => setMenuOpen((v) => !v)}
+            aria-expanded={menuOpen}
+            aria-haspopup="true"
+          >
+            <div className="profile-avatar">{avatarLetter}</div>
+            <div className="profile-info">
+              <span className="profile-name">{user.username}</span>
+            </div>
+            <span className={`profile-chevron ${menuOpen ? "profile-chevron--open" : ""}`}>
+              ···
+            </span>
+          </button>
+        </div>
+      )}
     </nav>
   );
 }

@@ -64,6 +64,12 @@ class AgentsSettings(BaseSettings):
     # --- Chat UI CORS ---
     chat_ui_cors_origin: str = "http://localhost:3000"
 
+    # --- Authentication (JWT) — OWASP A02: secrets from env only ---
+    jwt_secret_key: str = ""
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 30
+    jwt_refresh_token_expire_days: int = 7
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

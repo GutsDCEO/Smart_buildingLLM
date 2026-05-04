@@ -228,3 +228,9 @@ dist/
 # Agent Frameworks
 .agents/
 .gemini/
+
+# Backups and Temporary Files
+*.backup
+*.bak
+*.tmp
+*~

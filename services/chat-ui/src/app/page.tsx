@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, KeyboardEvent } from "react";
+import { useRouter } from "next/navigation";
 import { streamChat, fetchHealth, fetchHistory } from "@/lib/api";
+import { getStoredUser, validateSession, clearAuth } from "@/lib/auth";
+import type { AuthUser } from "@/lib/auth";
 import type { CitationData, HealthStatus } from "@/lib/api";
 import ChatMessage from "@/components/ChatMessage";
 import type { Message } from "@/components/ChatMessage";
@@ -45,6 +48,9 @@ const STARTER_CHIPS = [
 // ── Main Page Component ──────────────────────────────────────────
 
 export default function ChatPage() {
+  const router = useRouter();
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
@@ -59,16 +65,57 @@ export default function ChatPage() {
   const abortRef = useRef<AbortController | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const redirectingRef = useRef(false); // Prevent double-redirect
 
-  // ── Health check ─────────────────────────────────────────────
+  // ── Auth Guard ────────────────────────────────────────────────
+  //
+  // Strategy: show nothing until server validates the session.
+  // 1. Quick check: if no local data at all → instant redirect (no flash).
+  // 2. If local data exists → validate with server.
+  //    - Server says OK → render the app.
+  //    - Server says invalid → clearAuth() THEN redirect.
+  //    clearAuth() runs synchronously BEFORE router.replace(),
+  //    so by the time /login mounts its useEffect, localStorage is clean.
 
   useEffect(() => {
+    // Guard against StrictMode double-invoke or repeated calls
+    if (redirectingRef.current) return;
+
+    const cached = getStoredUser();
+    if (!cached) {
+      // No local data at all — go to login immediately
+      redirectingRef.current = true;
+      router.replace("/login");
+      return;
+    }
+
+    // Optimistically show cached user while we verify with server
+    setUser(cached);
+
+    validateSession().then((freshUser) => {
+      if (!freshUser) {
+        // Token expired and refresh failed — session is dead.
+        // clearAuth() already called inside validateSession().
+        redirectingRef.current = true;
+        router.replace("/login");
+      } else {
+        setUser(freshUser);
+        setAuthChecked(true);
+      }
+    });
+  }, [router]);
+
+  // ── Health check (gated — runs after auth confirmed) ─────────
+
+  useEffect(() => {
+    if (!authChecked) return;
     fetchHealth().then(setHealth);
-  }, []);
+  }, [authChecked]);
 
   // ── Load chat history when session changes ────────────────────
 
   useEffect(() => {
+    if (!authChecked) return;  // Don't fetch until auth confirmed
     setHistoryLoaded(false);
     setMessages([]);
     setIsLoadingHistory(true);
@@ -86,7 +133,7 @@ export default function ChatPage() {
       setHistoryLoaded(true);
       setIsLoadingHistory(false);
     });
-  }, [sessionId]);
+  }, [sessionId, authChecked]);
 
   // ── Auto-scroll ───────────────────────────────────────────────
 
@@ -116,6 +163,7 @@ export default function ChatPage() {
     setMessages([]);
     setHistoryLoaded(false);
     setThinkingEnabled(false);
+    setActiveTab("chat");
     inputRef.current?.focus();
   }, []);
 
@@ -221,6 +269,10 @@ export default function ChatPage() {
 
   const showEmpty = historyLoaded && messages.length === 0 && !isLoadingHistory;
 
+  // ── Early return AFTER all hooks (Rules of Hooks compliant) ──
+
+  if (!authChecked) return null;
+
   // ── Render ────────────────────────────────────────────────────
 
   return (
@@ -232,6 +284,7 @@ export default function ChatPage() {
         activeSessionId={sessionId}
         onSessionSelect={handleSessionSelect}
         onNewChat={handleNewChat}
+        user={user}
       />
 
       {/* Main */}

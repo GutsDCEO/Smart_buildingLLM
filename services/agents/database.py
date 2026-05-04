@@ -50,6 +50,48 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages (session_id);
 """
 
+# ── Authentication Tables (Phase 5) ──────────────────────────
+
+_CREATE_USERS_TABLE = """
+CREATE TABLE IF NOT EXISTS users (
+    id              SERIAL PRIMARY KEY,
+    username        TEXT NOT NULL UNIQUE,
+    email           TEXT NOT NULL UNIQUE,
+    password_hash   TEXT NOT NULL,
+    role            TEXT NOT NULL DEFAULT 'viewer' CHECK (role IN ('admin', 'viewer')),
+    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_login      TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_users_username ON users (username);
+CREATE INDEX IF NOT EXISTS idx_users_email ON users (email);
+"""
+
+_CREATE_REFRESH_TOKENS_TABLE = """
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+    id              SERIAL PRIMARY KEY,
+    user_id         INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash      TEXT NOT NULL UNIQUE,
+    expires_at      TIMESTAMPTZ NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked         BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens (user_id);
+"""
+
+_ADD_USER_ID_TO_MESSAGES = """
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_name = 'messages' AND column_name = 'user_id'
+    ) THEN
+        ALTER TABLE messages ADD COLUMN user_id INTEGER REFERENCES users(id);
+        CREATE INDEX idx_messages_user_id ON messages (user_id);
+    END IF;
+END $$;
+"""
+
 
 # ──────────────────────────────────────────────────────────────
 # Connection Lifecycle
@@ -75,8 +117,15 @@ async def connect_db() -> None:
         async with _pool.acquire() as conn:
             await conn.execute(_CREATE_DOCUMENTS_TABLE)
             await conn.execute(_CREATE_MESSAGES_TABLE)
+            # Auth tables — must be created AFTER messages (user_id FK)
+            await conn.execute(_CREATE_USERS_TABLE)
+            await conn.execute(_CREATE_REFRESH_TOKENS_TABLE)
+            await conn.execute(_ADD_USER_ID_TO_MESSAGES)
 
-        logger.info("PostgreSQL connected. 'documents' and 'messages' tables ensured.")
+        logger.info(
+            "PostgreSQL connected. Tables ensured: "
+            "documents, messages, users, refresh_tokens."
+        )
 
     except (asyncpg.PostgresError, OSError) as exc:
         logger.warning(

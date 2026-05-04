@@ -6,6 +6,7 @@ All business logic is delegated to:
   - guardrail_agent  (input validation)
   - router_agent     (intent classification)
   - qa_agent         (RAG pipeline)
+  - auth_service     (authentication & authorization)
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncGenerator, Optional
 
-from fastapi import FastAPI, HTTPException, Query, UploadFile, File
+from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
@@ -39,6 +40,9 @@ from llm_factory import create_llm_client
 from qdrant_search import qdrant_search
 from ingestion_gateway import ingestion_gateway
 from database import connect_db, disconnect_db
+from auth_router import router as auth_router
+from auth_middleware import get_current_user, require_admin
+from auth_models import UserResponse
 import document_service
 import history_service
 import sync_service
@@ -115,20 +119,24 @@ app = FastAPI(
     title="Smart Building AI — Agents Service",
     description=(
         "Orchestrates the three-agent RAG pipeline: "
-        "Guardrail → Router → Q&A with citations."
+        "Guardrail → Router → Q&A with citations. "
+        "Protected by JWT authentication (Phase 5)."
     ),
-    version="0.2.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
+# ── Auth Router ────────────────────────────────────────────────
+app.include_router(auth_router)
+
 # ──────────────────────────────────────────────────────────────
-# CORS — Allow Chat UI to call this API (OWASP A01)
+# CORS — Allow Chat UI to call this API (OWASP A01/A05)
 # ──────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[settings.chat_ui_cors_origin],
-    allow_credentials=False,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE", "PATCH"],
     allow_headers=["*"],
 )
 
@@ -149,7 +157,10 @@ async def health_check() -> HealthResponse:
 
 
 @app.post("/guard", response_model=GuardResponse, tags=["Agents"])
-async def guard(request: GuardRequest) -> GuardResponse:
+async def guard(
+    request: GuardRequest,
+    user: UserResponse = Depends(get_current_user),
+) -> GuardResponse:
     """
     Validate and sanitize user input.
 
@@ -158,12 +169,15 @@ async def guard(request: GuardRequest) -> GuardResponse:
       - allowed=False + reason if input is blocked.
     """
     result = guardrail_agent.validate(request)
-    logger.info("Guard result: allowed=%s", result.allowed)
+    logger.info("Guard result: allowed=%s (user=%s)", result.allowed, user.username)
     return result
 
 
 @app.post("/route", response_model=RouteResponse, tags=["Agents"])
-async def route(request: RouteRequest) -> RouteResponse:
+async def route(
+    request: RouteRequest,
+    user: UserResponse = Depends(get_current_user),
+) -> RouteResponse:
     """
     Classify user question intent via LLM.
 
@@ -183,7 +197,10 @@ async def route(request: RouteRequest) -> RouteResponse:
 
 
 @app.post("/ask", response_model=AskResponse, tags=["Agents"])
-async def ask(request: AskRequest) -> AskResponse:
+async def ask(
+    request: AskRequest,
+    user: UserResponse = Depends(get_current_user),
+) -> AskResponse:
     """
     Full RAG pipeline: embed → search → generate cited answer.
 
@@ -224,7 +241,10 @@ async def ask(request: AskRequest) -> AskResponse:
 
 
 @app.post("/ingest", response_model=IngestResponse, tags=["Ingestion"])
-async def ingest(file: UploadFile = File(...)) -> IngestResponse:
+async def ingest(
+    file: UploadFile = File(...),
+    admin: UserResponse = Depends(require_admin),
+) -> IngestResponse:
     """
     Unified ingestion endpoint. Receives a file from the UI,
     saves it to the /data/ingest folder (to maintain sync integrity),
@@ -304,6 +324,7 @@ async def _chat_stream(
     question: str,
     session_id: str = "default-session",
     enable_thinking: bool = False,
+    user_id: int | None = None,
 ) -> AsyncGenerator[str, None]:
     """
     The core SSE generator: runs Guard → Route → Q&A pipeline.
@@ -425,7 +446,7 @@ async def _chat_stream(
 
         # Save the assistant's full response to the database
         if accumulated_answer:
-            await history_service.save_message(session_id, "assistant", accumulated_answer)
+            await history_service.save_message(session_id, "assistant", accumulated_answer, user_id=user_id)
 
         # Send citations after full answer
         yield _sse_event("citations", citations)
@@ -456,7 +477,10 @@ async def _chat_stream(
 
 
 @app.post("/chat", tags=["Chat"])
-async def chat(request: ChatRequest) -> StreamingResponse:
+async def chat(
+    request: ChatRequest,
+    user: UserResponse = Depends(get_current_user),
+) -> StreamingResponse:
     """
     Unified SSE streaming endpoint for the Chat UI.
 
@@ -476,12 +500,12 @@ async def chat(request: ChatRequest) -> StreamingResponse:
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
-    # Save the user message to the database
+    # Save the user message to the database (with user_id for session isolation)
     session_id = request.session_id or "default-session"
-    await history_service.save_message(session_id, "user", request.question)
+    await history_service.save_message(session_id, "user", request.question, user_id=user.id)
 
     return StreamingResponse(
-        _chat_stream(request.question, session_id, request.enable_thinking),
+        _chat_stream(request.question, session_id, request.enable_thinking, user_id=user.id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -496,7 +520,10 @@ async def chat(request: ChatRequest) -> StreamingResponse:
 # ──────────────────────────────────────────────────────────────
 
 @app.get("/documents", tags=["Knowledge Base"])
-async def list_documents(file_type: Optional[str] = Query(None, description="Filter by file type: PDF, Word, HTML, Text")):
+async def list_documents(
+    file_type: Optional[str] = Query(None, description="Filter by file type: PDF, Word, HTML, Text"),
+    user: UserResponse = Depends(get_current_user),
+):
     """
     List all ingested documents with optional type filtering.
 
@@ -508,7 +535,10 @@ async def list_documents(file_type: Optional[str] = Query(None, description="Fil
 
 
 @app.delete("/documents/{doc_id}", tags=["Knowledge Base"])
-async def delete_document(doc_id: int):
+async def delete_document(
+    doc_id: int,
+    admin: UserResponse = Depends(require_admin),
+):
     """
     Delete a document and all its associated chunks from Qdrant.
 
@@ -552,26 +582,32 @@ async def delete_document(doc_id: int):
 # ──────────────────────────────────────────────────────────────
 
 @app.get("/sessions", tags=["Chat"])
-async def list_sessions():
+async def list_sessions(
+    user: UserResponse = Depends(get_current_user),
+):
     """
-    List all chat sessions with their auto-numbered titles and last activity.
+    List chat sessions for the current user only (session isolation).
 
     Returns:
       A list of sessions: [{session_id, title, last_active, message_count}]
     """
-    sessions = await history_service.list_sessions()
+    sessions = await history_service.list_sessions(user_id=user.id)
     return {"sessions": sessions}
 
 
 @app.delete("/sessions/{session_id}", tags=["Chat"])
-async def delete_session(session_id: str):
+async def delete_session(
+    session_id: str,
+    user: UserResponse = Depends(get_current_user),
+):
     """
     Delete a conversation and all its messages permanently.
+    Only deletes if the session belongs to the current user.
 
     Returns:
       Number of messages deleted.
     """
-    count = await history_service.clear_history(session_id)
+    count = await history_service.clear_history(session_id, user_id=user.id)
     return {"session_id": session_id, "messages_deleted": count}
 
 
@@ -580,14 +616,17 @@ async def delete_session(session_id: str):
 # ──────────────────────────────────────────────────────────────
 
 @app.get("/history/{session_id}", tags=["Chat"])
-async def get_history(session_id: str):
+async def get_history(
+    session_id: str,
+    user: UserResponse = Depends(get_current_user),
+):
     """
-    Retrieve chat history for a given session.
+    Retrieve chat history for a given session (user-scoped).
 
     Returns:
       A list of messages with role, content, and timestamp.
     """
-    messages = await history_service.get_history(session_id)
+    messages = await history_service.get_history(session_id, user_id=user.id)
     return {"session_id": session_id, "messages": messages}
 
 
@@ -597,7 +636,9 @@ async def get_history(session_id: str):
 # ──────────────────────────────────────────────────────────────
 
 @app.post("/sync", tags=["Knowledge Base"])
-async def sync_folder():
+async def sync_folder(
+    admin: UserResponse = Depends(require_admin),
+):
     """
     Synchronize the local /data/ingest folder with the AI's Knowledge Base.
 
