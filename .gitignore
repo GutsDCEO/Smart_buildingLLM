@@ -8,14 +8,14 @@ __pycache__/
 
 # Distribution / packaging
 .Python
-build/
+/build/
 develop-eggs/
-dist/
+/dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -161,20 +161,20 @@ cython_debug/
 Thumbs.db
 
 # Project Specific
-data/
+/data/
 **/data/
 n8n/nodes/
 n8n/config/
 *.log
 **/wheels/
 *.resolved
-.env.example
+
 
 # AI/ML Specific
 .cache/
 .huggingface/
 tokenizers/
-models/
+/models/
 *.bin
 *.pt
 *.pth
@@ -217,6 +217,13 @@ dist/
 .env.production.local
 *.pem
 *.key
+*.cert
+*.crt
+*.p12
+*.pfx
+credentials.json
+client_secret*.json
+auth.json
 
 # OS / IDE
 .DS_Store

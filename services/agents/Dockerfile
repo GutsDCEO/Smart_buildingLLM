@@ -23,6 +23,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --upgrade pip && \
+    pip install torch --index-url https://download.pytorch.org/whl/cpu && \
     pip install -r requirements.txt
 
 # Copy application code

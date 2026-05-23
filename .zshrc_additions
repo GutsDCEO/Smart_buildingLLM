@@ -1,0 +1,2 @@
+# ── Plan B: Launch OpenCode Workhorse ──
+alias planb="cd /Users/mac/Smart_buildingLLM && opencode"

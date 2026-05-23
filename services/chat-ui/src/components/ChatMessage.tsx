@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, type ReactNode } from "react";
 import type { CitationData } from "@/lib/api";
 import CitationCard from "./CitationCard";
+import MermaidDiagram, { MermaidSkeleton } from "./MermaidDiagram";
 
 export interface Message {
   id: string;
@@ -15,6 +16,50 @@ export interface Message {
 
 interface ChatMessageProps {
   message: Message;
+}
+
+// ── Mermaid fence parser ─────────────────────────────────────────
+// Splits message text into plain text spans and MermaidDiagram
+// components. During streaming, shows a skeleton if a fence is open.
+
+const MERMAID_FENCE_RE = /(```mermaid\n[\s\S]*?```)/g;
+
+export function renderContent(text: string, isStreaming?: boolean): ReactNode[] {
+  const elements: ReactNode[] = [];
+
+  // Split on complete ```mermaid ... ``` blocks
+  const parts = text.split(MERMAID_FENCE_RE);
+
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (!part) continue;
+
+    if (part.startsWith("```mermaid\n")) {
+      // It's a COMPLETE mermaid block
+      if (isStreaming) {
+        // Never render the actual diagram during streaming to avoid race conditions
+        elements.push(<MermaidSkeleton key={`mmd-skel-${i}`} />);
+      } else {
+        const code = part.slice(10, -3).trim();
+        if (code) {
+          elements.push(<MermaidDiagram key={`mmd-${i}`} code={code} />);
+        }
+      }
+    } else {
+      // It's text, but check if it contains an UNCLOSED mermaid fence at the end
+      if (isStreaming && i === parts.length - 1 && part.includes("```mermaid\n")) {
+        const textBeforeFence = part.split("```mermaid\n")[0];
+        if (textBeforeFence) {
+          elements.push(<span key={`txt-${i}`}>{textBeforeFence}</span>);
+        }
+        elements.push(<MermaidSkeleton key={`mmd-skel-open`} />);
+      } else {
+        elements.push(<span key={`txt-${i}`}>{part}</span>);
+      }
+    }
+  }
+
+  return elements;
 }
 
 export default function ChatMessage({ message }: ChatMessageProps) {
@@ -55,9 +100,11 @@ export default function ChatMessage({ message }: ChatMessageProps) {
             <span className="message-time">{time}</span>
           </div>
 
-          {/* Content */}
+          {/* Content — with mermaid detection */}
           <div ref={contentRef} className="message-text">
-            {message.content}
+            {isUser
+              ? message.content
+              : renderContent(message.content, message.isStreaming)}
             {message.isStreaming && <span className="cursor-blink">▌</span>}
           </div>
 

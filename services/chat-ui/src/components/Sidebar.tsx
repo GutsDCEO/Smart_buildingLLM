@@ -179,18 +179,22 @@ export default function Sidebar({
           {/* Popup Menu (above profile) */}
           {menuOpen && (
             <div className="profile-menu" id="profile-menu">
-              <button
-                className="profile-menu-item"
-                id="menu-docs"
-                onClick={handleDocsClick}
-              >
-                <span className="profile-menu-icon">📚</span>
-                <span>Knowledge Base</span>
-                {activeTab === "knowledge" && (
-                  <span className="profile-menu-check">✓</span>
-                )}
-              </button>
-              <div className="profile-menu-divider" />
+              {isAdmin && (
+                <>
+                  <button
+                    className="profile-menu-item"
+                    id="menu-docs"
+                    onClick={handleDocsClick}
+                  >
+                    <span className="profile-menu-icon">📚</span>
+                    <span>Knowledge Base</span>
+                    {activeTab === "knowledge" && (
+                      <span className="profile-menu-check">✓</span>
+                    )}
+                  </button>
+                  <div className="profile-menu-divider" />
+                </>
+              )}
               <div className="profile-menu-info">
                 <span className="profile-menu-email">{user.email}</span>
                 <span className={`profile-menu-role profile-menu-role--${user.role}`}>
