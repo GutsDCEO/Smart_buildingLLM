@@ -23,21 +23,38 @@ logger = logging.getLogger(__name__)
 
 # Common prompt injection patterns (OWASP LLM01)
 _INJECTION_PATTERNS: list[re.Pattern] = [
-    re.compile(r"ignore\s+(all\s+)?(previous|above|prior)\s+(instructions|prompts)", re.IGNORECASE),
+    re.compile(
+        r"ignore\s+(all\s+)?(previous|above|prior)\s+(instructions|prompts)",
+        re.IGNORECASE,
+    ),
     re.compile(r"you\s+are\s+now\s+(a|an|the)\s+", re.IGNORECASE),
     re.compile(r"system\s*:\s*", re.IGNORECASE),
     re.compile(r"<\s*(script|img|iframe|svg|object)", re.IGNORECASE),
-    re.compile(r"(DROP\s+TABLE|DELETE\s+FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET)", re.IGNORECASE),
+    re.compile(
+        r"(DROP\s+TABLE|DELETE\s+FROM|INSERT\s+INTO|UPDATE\s+\w+\s+SET)", re.IGNORECASE
+    ),
     re.compile(r"do\s+not\s+follow\s+(your|the)\s+(rules|instructions)", re.IGNORECASE),
     re.compile(r"pretend\s+(you\s+are|to\s+be)", re.IGNORECASE),
-    re.compile(r"reveal\s+(your|the|hidden|system|secret|\s)+\s+(prompt|instructions)", re.IGNORECASE),
-    re.compile(r"(expose|show|reveal|print|output)\s+(your|the|all)?\s*(api\s*tokens?|keys?|passwords?|credentials?|secrets?)", re.IGNORECASE),
-    re.compile(r"(what\s+is|tell\s+me)\s+(your|the)\s+(api\s*tokens?|keys?|passwords?|credentials?|secrets?)", re.IGNORECASE),
+    re.compile(
+        r"reveal\s+(your|the|hidden|system|secret|\s)+\s+(prompt|instructions)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(expose|show|reveal|print|output)\s+(your|the|all)?\s*(api\s*tokens?|keys?|passwords?|credentials?|secrets?)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"(what\s+is|tell\s+me)\s+(your|the)\s+(api\s*tokens?|keys?|passwords?|credentials?|secrets?)",
+        re.IGNORECASE,
+    ),
 ]
 
 # Abusive / off-topic patterns
 _ABUSE_PATTERNS: list[re.Pattern] = [
-    re.compile(r"\b(hack|exploit|bypass|jailbreak)\b", re.IGNORECASE),
+    re.compile(r"\b(hack|exploit|jailbreak)\b", re.IGNORECASE),
+    re.compile(
+        r"\bbypass\s+(your|the)?\s+(rules|instructions|system)\b", re.IGNORECASE
+    ),
 ]
 
 
@@ -84,7 +101,9 @@ class GuardrailAgent:
         # --- Check 3: Prompt injection ---
         for pattern in _INJECTION_PATTERNS:
             if pattern.search(question):
-                logger.warning("Blocked: prompt injection detected: %s", pattern.pattern)
+                logger.warning(
+                    "Blocked: prompt injection detected: %s", pattern.pattern
+                )
                 return GuardResponse(
                     allowed=False,
                     reason="Your question contains disallowed patterns.",

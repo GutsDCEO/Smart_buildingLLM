@@ -1,0 +1,20 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  // ── Default Model (Standard Tier — 90% of tasks) ──
+  // DeepSeek V4 Pro: 1.6T MoE, $0.43/M input, $0.87/M output
+  "model": "deepseek/deepseek-v4-pro",
+
+  // ── Permission Gates (Human-in-the-Loop) ──
+  // Always ask before editing files or running bash commands
+  "permission": {
+    "edit": "ask",
+    "bash": "ask"
+  },
+
+  // ── Custom Agent Instructions ──
+  // Load the Workhorse agent which carries Quality Sentinel + Project Context
+  "instructions": [
+    ".opencode/agents/workhorse.md"
+  ]
+}

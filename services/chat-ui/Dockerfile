@@ -24,7 +24,7 @@ COPY . .
 RUN mkdir -p public
 
 # Generate standalone output (requires next.config setting)
-RUN npm run build
+RUN --mount=type=cache,target=/app/.next/cache npm run build
 
 # ── Stage 2: Production Runner ───────────────────────────────
 FROM node:20-alpine AS runner

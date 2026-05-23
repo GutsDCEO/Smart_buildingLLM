@@ -1,0 +1,47 @@
+# Pre-commit hooks — Medium Aggressiveness
+# Catches: hardcoded secrets, Python linting, type issues
+# Install: pip install pre-commit && pre-commit install
+
+repos:
+  # ── Secret Detection ──────────────────────────────────────────
+  # Prevents accidental commits of API keys, passwords, tokens
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ['--baseline', '.secrets.baseline']
+        exclude: '(\.lock|\.svg|\.png|\.jpg|\.webp)$'
+
+  # ── General File Hygiene ──────────────────────────────────────
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace        # Remove trailing whitespace
+      - id: end-of-file-fixer          # Ensure files end with newline
+      - id: check-yaml                 # Validate YAML syntax
+      - id: check-json                 # Validate JSON syntax
+      - id: check-added-large-files    # Block files > 500KB
+        args: ['--maxkb=500']
+      - id: no-commit-to-branch        # Block direct commits to main
+        args: ['--branch', 'main']
+
+  # ── Python Linting (Ruff — blazing fast) ──────────────────────
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff                       # Linting (replaces flake8, isort, etc.)
+        args: ['--fix', '--exit-non-zero-on-fix']
+        types_or: [python, pyi]
+      - id: ruff-format               # Formatting (replaces black)
+        types_or: [python, pyi]
+
+  # ── Python Type Checking (basic) ──────────────────────────────
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.2
+    hooks:
+      - id: mypy
+        args: ['--ignore-missing-imports', '--no-strict-optional']
+        additional_dependencies: ['pydantic>=2.0', 'fastapi>=0.100']
+        # Only run on explicitly staged Python files
+        pass_filenames: true
+        types: [python]

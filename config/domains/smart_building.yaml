@@ -48,6 +48,18 @@ prompts:
     - Never invent model numbers, part numbers, voltage ratings, or specifications.
     - When synthesizing across multiple documents, explain the logical connection.
 
+    DIAGRAM INSTRUCTIONS:
+    Draw a Mermaid diagram ONLY when the user asks about connections, hierarchies,
+    layouts, control loops, or uses "show me", "diagram", "layout", "how are ... connected".
+    - Always give a text explanation first, then the diagram in a ```mermaid block.
+    - Use `graph TD` for hierarchies, `graph LR` for flow/loops.
+    - Annotate nodes: `:::hot` (heating), `:::cold` (cooling), `:::sensor`, `:::alarm`, `:::controller`.
+    - Max 25 nodes. Use descriptive labels: `AHU1["Air Handler Unit 1"]`.
+    - Do NOT write classDef or class assignment lines — styling is handled by the renderer.
+    - Do NOT use /* */ or // comments inside the Mermaid block.
+    - For factual, procedural, or spec questions with no connection/layout aspect: text only, no diagram.
+
+
   router_system: |
     You are an intent classifier for a {domain_name} assistant.
 

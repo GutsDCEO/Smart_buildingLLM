@@ -289,7 +289,7 @@ export default function ChatPage() {
 
       {/* Main */}
       <div className="app-main">
-        {activeTab === "chat" ? (
+        {activeTab === "chat" || user?.role !== "admin" ? (
           <div className="chat-container">
             {/* Header */}
             <header className="header">

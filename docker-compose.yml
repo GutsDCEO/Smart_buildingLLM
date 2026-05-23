@@ -6,6 +6,11 @@
 #   docker-compose up -d    → start all services
 #   docker-compose down     → stop all services
 # ============================================================
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
 
@@ -16,6 +21,7 @@ services:
     image: qdrant/qdrant:latest
     container_name: sb_qdrant
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "${QDRANT_PORT:-6333}:6333"
       - "${QDRANT_GRPC_PORT:-6334}:6334"
@@ -33,6 +39,13 @@ services:
     image: postgres:16-alpine
     container_name: sb_postgres
     restart: unless-stopped
+    logging: *default-logging
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c work_mem=16MB
+      -c synchronous_commit=off
+      -c max_connections=50
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-smartbuilding}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
@@ -58,6 +71,7 @@ services:
       dockerfile: Dockerfile
     container_name: sb_ingestion
     restart: unless-stopped
+    logging: *default-logging
     deploy:
       resources:
         limits:
@@ -85,12 +99,17 @@ services:
       dockerfile: Dockerfile
     container_name: sb_embedding
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - .env
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - HF_HOME=/app/.cache
+      - TRANSFORMERS_CACHE=/app/.cache
     ports:
       - "${EMBEDDING_SERVICE_PORT:-8002}:8002"
+    volumes:
+      - hf_cache:/app/.cache
     networks:
       - sb_network
     depends_on:
@@ -111,6 +130,7 @@ services:
     image: n8nio/n8n:latest
     container_name: sb_n8n
     restart: unless-stopped
+    logging: *default-logging
     environment:
       - N8N_BASIC_AUTH_ACTIVE=${N8N_BASIC_AUTH_ACTIVE:-true}
       - N8N_BASIC_AUTH_USER=${N8N_BASIC_AUTH_USER:-admin}
@@ -149,10 +169,13 @@ services:
       dockerfile: Dockerfile
     container_name: sb_agents
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - .env
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - HF_HOME=/home/appuser/.cache
+      - TRANSFORMERS_CACHE=/home/appuser/.cache
     ports:
       - "${AGENTS_SERVICE_PORT:-8003}:8003"
     volumes:
@@ -160,6 +183,7 @@ services:
       - ./tests:/app/tests
       - ./data/ingest:/data/ingest
       - ./config:/config
+      - hf_cache:/home/appuser/.cache
     networks:
       - sb_network
     depends_on:
@@ -183,6 +207,7 @@ services:
     image: ollama/ollama:latest
     container_name: sb_ollama
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "11434:11434"
     volumes:
@@ -210,6 +235,7 @@ services:
         - NEXT_PUBLIC_API_URL=http://localhost:8003
     container_name: sb_chat_ui
     restart: unless-stopped
+    logging: *default-logging
     env_file:
       - .env
     environment:
@@ -238,6 +264,8 @@ volumes:
   n8n_data:
     driver: local
   ollama_data:
+    driver: local
+  hf_cache:
     driver: local
 
 # ──────────────────────────────────────────────────────────
