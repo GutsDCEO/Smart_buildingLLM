@@ -140,7 +140,7 @@ A local, privacy-first, multi-agent AI system for Smart Building document intell
 > **Status:** 🟢 Phase 4: Post-MVP Enhancements
 **Started:** March 2026
 **Target Platform:** Mac Mini (Apple Silicon)
-> 
+>
 
 ---
 
@@ -186,7 +186,7 @@ Smart Building data often contains sensitive information (blueprints, access cod
 **RAG = Retrieval-Augmented Generation** — the industry standard for "AI over local data."
 
 > **Key Insight:** We do NOT train/fine-tune an LLM on our data. Instead, we search for relevant document pieces and pass them to the LLM as context.
-> 
+>
 
 ### How It Works (Step by Step)
 
@@ -233,7 +233,7 @@ graph TD
 # 🎯 3. MVP Scope Definition
 
 > **Rule: Ship the MVP first. Everything else is Phase 2+.**
-> 
+>
 
 ## ✅ MVP — What We Ship First
 
@@ -277,7 +277,7 @@ The MVP answers one question: **"Can a user ask a question about their Smart Bui
 ```mermaid
 graph TD
     subgraph "DATA INPUT"
-        PDF["📄 PDFs"] 
+        PDF["📄 PDFs"]
         DOCX["📝 DOCX"]
     end
 
@@ -304,6 +304,395 @@ graph TD
     GUARD --> ROUTER["🚦 ROUTER AGENT\n• Classify intent\n• Categories: factual_qa | out_of_scope"]
     ROUTER --> QA["💬 QA AGENT\n• Embed the question\n• Search Qdrant for top-5 chunks\n• Send chunks + question to LLM\n• Generate answer WITH citations"]
     QA --> DISPLAY["🖥️ Chat UI displays:\nAccording to MaintenanceManual.pdf p.34..."]
+```
+
+## 📐 Formal System Diagrams
+
+### Figure 4.1: General Use Case Diagram
+This diagram maps out the high-level functional scope for the three primary system actors (End User, Knowledge Manager, and System Administrator).
+
+```mermaid
+graph LR
+    subgraph Actors
+        direction TB
+        EU["👤 End User"]
+        KM["👤 Knowledge Manager"]
+        SA["👤 System Administrator"]
+    end
+
+    subgraph "Smart Building AI Use Cases"
+        direction TB
+        UC1["Ask Factual Questions"]
+        UC2["View Cited Answers"]
+        UC3["Manage Chat Sessions"]
+        UC4["Toggle Chain-of-Thought"]
+        UC5["View Ingestion Status"]
+
+        UC6["Upload Documents"]
+        UC7["Delete Documents"]
+        UC8["Trigger Folder Sync"]
+        UC9["Monitor Ingestion Pipeline"]
+
+        UC10["Configure LLM Provider"]
+        UC11["Edit Domain YAML Config"]
+        UC12["Manage Docker Services"]
+        UC13["Monitor Container Health"]
+    end
+
+    EU --> UC1
+    EU --> UC2
+    EU --> UC3
+    EU --> UC4
+    EU --> UC5
+
+    KM --> UC6
+    KM --> UC7
+    KM --> UC8
+    KM --> UC9
+
+    SA --> UC10
+    SA --> UC11
+    SA --> UC12
+    SA --> UC13
+```
+
+---
+
+### Figure 4.2: Document Ingestion Pipeline Flowchart
+This flowchart illustrates the 7-step document ingestion pipeline from initial upload to vector database storage.
+
+```mermaid
+graph TD
+    Step1["1. Upload<br/>(UI /ingest endpoint or /data/ingest/)"]
+    Step2["2. n8n Trigger<br/>(Webhook or local directory watcher)"]
+    Step3["3. Three-Pass Extraction<br/>(PyMuPDF → Docling TableFormer → Tesseract OCR)"]
+    Step4["4. Text Cleaning<br/>(Remove headers/footers & normalize whitespace)"]
+    Step5["5. Chunking<br/>(500-token chunks, 50-token overlap, tiktoken)"]
+    Step6["6. Embedding<br/>(all-MiniLM-L6-v2 384-dim vector generation)"]
+    Step7["7. Vector Storage & Audit<br/>(Qdrant upsert & Postgres ingestion_log entry)"]
+
+    Step1 --> Step2 --> Step3 --> Step4 --> Step5 --> Step6 --> Step7
+```
+
+---
+
+### Figure 4.3: RAG Query Processing Flow
+This flowchart illustrates the 9-step query execution flow, from user input to Token-by-Token Server-Sent Events (SSE) streaming.
+
+```mermaid
+graph TD
+    Step1["1. User Input<br/>(Question submitted via Chat UI)"]
+    Step2["2. Guardrail Check<br/>(Regex injection detection & sanitization)"]
+    Step3["3. Intent Routing<br/>(LLM classifies: factual_qa or out_of_scope)"]
+    Step4["4. Query Embedding<br/>(all-MiniLM-L6-v2 converts query to vector)"]
+    Step5["5. Vector Search<br/>(Qdrant cosine similarity query; fetch top-15)"]
+    Step6["6. Re-Ranking<br/>(Cross-Encoder re-scores; filter to top-5)"]
+    Step7["7. History Merge<br/>(Load last 5 turns from PostgreSQL messages)"]
+    Step8["8. LLM Generation<br/>(Qwen3-32B / DeepSeek R1; generate cited answer)"]
+    Step9["9. SSE Streaming<br/>(Tokens streamed to Next.js Chat UI in real-time)"]
+
+    Step1 --> Step2 --> Step3
+    Step3 -- factual_qa --> Step4 --> Step5 --> Step6 --> Step7 --> Step8 --> Step9
+    Step3 -- out_of_scope --> OOS["Return fallback out_of_scope response"]
+```
+
+---
+
+### Figure 4.4: Relational Database Schema
+This Entity-Relationship (ER) diagram details the PostgreSQL database tables used for session management, message persistence, document tracking, and audit logging.
+
+```mermaid
+erDiagram
+    users {
+        SERIAL id PK
+        TEXT username
+        TEXT email
+        TEXT password_hash
+        TEXT role
+        BOOLEAN is_active
+        TIMESTAMPTZ created_at
+        TIMESTAMPTZ last_login
+    }
+
+    refresh_tokens {
+        SERIAL id PK
+        INTEGER user_id FK
+        TEXT token_hash
+        TIMESTAMPTZ expires_at
+        TIMESTAMPTZ created_at
+        BOOLEAN revoked
+    }
+
+    messages {
+        SERIAL id PK
+        TEXT session_id
+        TEXT role
+        TEXT content
+        TIMESTAMPTZ created_at
+        INTEGER user_id FK
+    }
+
+    documents {
+        SERIAL id PK
+        TEXT filename
+        TEXT file_type
+        INTEGER chunk_count
+        INTEGER file_size_bytes
+        TEXT status
+        TIMESTAMPTZ created_at
+    }
+
+    ingestion_log {
+        SERIAL id PK
+        TEXT source_file
+        INTEGER chunk_count
+        TEXT_array vector_ids
+        TIMESTAMPTZ ingested_at
+    }
+
+    users ||--o{ refresh_tokens : "has"
+    users ||--o{ messages : "writes"
+```
+
+---
+
+### Figure 4.5: Detailed System Use Case Diagram
+This expanded use case diagram shows system boundaries, subsystems, and the primary dependencies (includes/extends) between actions.
+
+```mermaid
+graph LR
+    subgraph Actors
+        EU["👤 End User"]
+        KM["👤 Knowledge Manager"]
+        SA["👤 System Administrator"]
+    end
+
+    subgraph SystemBoundary["System Boundary: Smart Building AI"]
+        subgraph ChatService["Chat Subsystem"]
+            UC_Ask["Ask Question"]
+            UC_Guard["Guardrail Input Validation"]
+            UC_Route["Route Intent"]
+            UC_ViewAns["View Cited Answer"]
+            UC_ManageSess["Manage Chat Sessions"]
+            UC_ToggleCOT["Toggle Chain-of-Thought"]
+        end
+
+        subgraph IngestionService["Knowledge Base Subsystem"]
+            UC_Upload["Upload Document"]
+            UC_Extract["Extract Text"]
+            UC_Embed["Generate Embeddings"]
+            UC_Delete["Delete Document"]
+            UC_Cleanup["Cleanup Vectors"]
+            UC_Sync["Sync Folder"]
+            UC_ListDocs["View/Filter Documents"]
+        end
+
+        subgraph AdminService["Administration Subsystem"]
+            UC_ConfigLLM["Switch LLM Provider"]
+            UC_EditYAML["Edit Domain YAML Config"]
+            UC_Docker["Manage Docker Services"]
+            UC_Health["Monitor Health"]
+        end
+    end
+
+    EU --> UC_Ask
+    EU --> UC_ViewAns
+    EU --> UC_ManageSess
+    EU --> UC_ToggleCOT
+
+    KM --> UC_Upload
+    KM --> UC_Delete
+    KM --> UC_Sync
+    KM --> UC_ListDocs
+
+    SA --> UC_ConfigLLM
+    SA --> UC_EditYAML
+    SA --> UC_Docker
+    SA --> UC_Health
+
+    UC_Ask -. "includes" .-> UC_Guard
+    UC_Ask -. "includes" .-> UC_Route
+
+    UC_Upload -. "includes" .-> UC_Extract
+    UC_Upload -. "includes" .-> UC_Embed
+
+    UC_Delete -. "includes" .-> UC_Cleanup
+```
+
+---
+
+### Figure 4.6: Backend Class Diagram
+This UML class diagram catalogs the core backend class hierarchy, detailing abstract base interfaces, concrete LLM client extensions, factories, agents, and helper modules.
+
+```mermaid
+classDiagram
+    class LLMProvider {
+        <<interface>>
+        +startup() None
+        +shutdown() None
+        +generate(prompt, system_prompt, temperature) str
+        +generate_stream(prompt, system_prompt, temperature) AsyncGenerator
+        +is_reachable() bool
+    }
+
+    class OllamaClient {
+        -_base_url: str
+        -_model: str
+        -_timeout: int
+        -_client: AsyncClient
+        +startup() None
+        +shutdown() None
+        +generate(prompt, system_prompt, temperature) str
+        +generate_stream(prompt, system_prompt, temperature) AsyncGenerator
+        +is_reachable() bool
+    }
+
+    class GroqClient {
+        -_api_key: str
+        -_model: str
+        -_timeout: int
+        -_client: AsyncClient
+        +startup() None
+        +shutdown() None
+        +generate(prompt, system_prompt, temperature) str
+        +generate_stream(prompt, system_prompt, temperature) AsyncGenerator
+        +is_reachable() bool
+    }
+
+    class LLMFactory {
+        +create_llm_client() LLMProvider
+    }
+
+    class QAAgent {
+        -_llm: LLMProvider
+        +answer(request, conversation_history) AskResponse
+        -_build_prompt(question, results, history) str
+        -_build_citations(results) list
+    }
+
+    class RouterAgent {
+        -_llm: LLMProvider
+        +classify(request) RouteResponse
+        -_parse_response(raw) RouteResponse
+    }
+
+    class GuardrailAgent {
+        +validate(question) GuardResponse
+        -_sanitize(text) str
+    }
+
+    class Reranker {
+        -_model: CrossEncoder
+        +load_model() None
+        +rerank(question, results, top_n) list
+    }
+
+    class Embedder {
+        -_model: SentenceTransformer
+        +is_loaded: bool
+        +load_model() None
+        +embed(texts) list
+    }
+
+    LLMProvider <|-- OllamaClient : extends
+    LLMProvider <|-- GroqClient : extends
+    LLMFactory ..> LLMProvider : creates
+    QAAgent --> LLMProvider : depends on
+    RouterAgent --> LLMProvider : depends on
+    QAAgent --> Reranker : uses
+```
+
+---
+
+### Figure 4.7: RAG Query Sequence Diagram
+This UML sequence diagram traces the complete end-to-end lifecycle of a factual user query, illustrating agent cooperation, vector retrieval, cross-encoder re-ranking, and streaming.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant User as Frontend (Next.js)
+    participant API as FastAPI Orchestrator
+    participant Guard as Guardrail Agent
+    participant Router as Router Agent
+    participant Qdrant as Qdrant (Vector DB)
+    participant Rerank as Re-Ranker
+    participant DB as History Service (Postgres)
+    participant LLM as LLM (Ollama/Groq)
+
+    User->>API: POST /chat (question, session_id)
+    API->>Guard: validate(question)
+    alt is disallowed
+        Guard-->>API: GuardResponse (allowed=False)
+        API-->>User: HTTP 400 or Error response
+    else is allowed
+        Guard-->>API: GuardResponse (allowed=True, sanitized_question)
+        API->>Router: classify(sanitized_question)
+
+        alt out_of_scope
+            Router-->>API: RouteResponse (intent=out_of_scope)
+            API-->>User: Return fallback out_of_scope message
+        else factual_qa
+            Router-->>API: RouteResponse (intent=factual_qa)
+
+            API->>API: Call /vectorize on embedding service
+            API->>Qdrant: query_points(embedded_query, limit=15)
+            Qdrant-->>API: 15 ScoredPoints (metadata + text)
+
+            API->>Rerank: rerank(question, results, top_n=5)
+            Rerank-->>API: 5 re-ranked results
+
+            API->>DB: get_session_history(session_id, limit=5)
+            DB-->>API: last 5 chat turns
+
+            API->>LLM: generate_stream(context + history + question)
+            loop Streaming tokens
+                LLM-->>API: Token string
+                API-->>User: SSE Chunk (Server-Sent Event)
+            end
+            API->>DB: save_message(user & assistant responses)
+        end
+    end
+```
+
+---
+
+### Figure 4.8: System Deployment Diagram
+This deployment diagram outlines the containerized services and network topology of the Smart Building AI system running on the Mac Mini hardware host.
+
+```mermaid
+graph TB
+    subgraph Host["💻 Host Machine: Mac Mini (Apple Silicon)"]
+        Ollama["🧠 Ollama Local LLM<br/>(Port 11434)"]
+        ChatUI["🖥️ Next.js Chat UI<br/>(Port 3000)"]
+
+        subgraph Docker["🐳 Docker Engine (Bridge Network: sb_network)"]
+            direction LR
+            sb_n8n["🔄 sb_n8n<br/>(n8n Orchestration<br/>Port 5678)"]
+            sb_agents["🤖 sb_agents<br/>(FastAPI Agents Service<br/>Port 8003)"]
+            sb_ingestion["📄 sb_ingestion<br/>(FastAPI Ingestion Service<br/>Port 8001)"]
+            sb_embedding["🧬 sb_embedding<br/>(FastAPI Embedding Service<br/>Port 8002)"]
+            sb_postgres["🗄️ sb_postgres<br/>(PostgreSQL 16 DB<br/>Port 5432)"]
+            sb_qdrant["🔎 sb_qdrant<br/>(Qdrant Vector DB<br/>Port 6333)"]
+        end
+    end
+
+    %% Host to docker connections
+    ChatUI -- "HTTP requests" --> sb_agents
+    sb_agents -- "HTTP requests" --> Ollama
+
+    %% Internal Docker communication
+    sb_n8n -- "Orchestrates" --> sb_ingestion
+    sb_n8n -- "Orchestrates" --> sb_embedding
+    sb_n8n -- "Orchestrates" --> sb_agents
+
+    sb_agents -- "History & Auth" --> sb_postgres
+    sb_agents -- "Retrieve chunks" --> sb_qdrant
+    sb_agents -- "Call /vectorize" --> sb_embedding
+
+    sb_embedding -- "Store vectors" --> sb_qdrant
+    sb_embedding -- "Audit logs" --> sb_postgres
+
+    sb_ingestion -- "Temporary cache" --> sb_postgres
 ```
 
 ---
@@ -353,7 +742,7 @@ class BaseParser(ABC):
     @abstractmethod
     def supported_extensions(self) -> tuple[str, ...]:
         ...
-    
+
     @abstractmethod
     def parse(self, file_path: Path) -> list[ParsedPage]:
         ...
@@ -468,11 +857,11 @@ The embedding model is loaded **once at startup** and kept in memory. This is cr
 class Embedder:
     def __init__(self):
         self._model = None   # Not loaded yet
-    
+
     def load_model(self):
         # Called ONCE at startup via FastAPI lifespan event
         self._model = SentenceTransformer(settings.embedding_model_name)
-    
+
     def embed(self, texts: list[str]) -> list[list[float]]:
         # Already in RAM — this is millisecond-fast
         return [vec.tolist() for vec in self._model.encode(texts)]
@@ -493,7 +882,7 @@ async def log_ingestion(source_file, chunk_count, vector_ids):
         # Postgres is down — LOG A WARNING but DO NOT crash
         logger.warning("Skipping metadata log — PostgreSQL not connected.")
         return  # The embedding pipeline continues normally
-    
+
     # If Postgres IS
 ```
 
@@ -508,10 +897,10 @@ async def log_ingestion(source_file, chunk_count, vector_ids):
 ### **🚦 Router Agent (Deep-Dive)**
 
 > **Prompt Design (The "Classifier"):** The Router uses a strict system prompt that defines the "Smart Building" domain (HVAC, maintenance, security, certifications). Any query outside this domain is flagged as `out_of_scope`.
-> 
-> 
+>
+>
 > **Why LLM Routing?** Unlike keyword matching, LLM routing understands semantic intent. A question like *"How do I fix the heat?"* is correctly routed to `factual_qa` even if the word "HVAC" isn't present.
-> 
+>
 
 ### 💬 Agent 4: Q&A Agent (⭐ The Core Product)
 
@@ -525,13 +914,13 @@ async def log_ingestion(source_file, chunk_count, vector_ids):
 ### **💬 Q&A Agent (Deep-Dive)**
 
 > **Vector Search Strategy:**
-> 
+>
 > 1. **Embedding**: The user question is converted to a 384-dimensional vector.
 > 2. **Retrieval**: Qdrant performs a cosine similarity search to find the 5 most relevant chunks.
 > 3. **Context Injection**: These chunks are injected into the prompt context for the LLM.
-> 
+>
 > **Forced Citations:** The LLM is strictly instructed to answer using provided context ONLY and must fail if no source is found.
-> 
+>
 
 ### 🛡️ Agent 5: Guardrail Agent
 
@@ -544,10 +933,10 @@ async def log_ingestion(source_file, chunk_count, vector_ids):
 ### **🛡️ Guardrail Agent (Hardening)**
 
 > **Security Patterns:** Blocks prompt injections ("ignore previous instructions") and prevents sensitive token/secret exposure via regex.
-> 
-> 
+>
+>
 > **Why Rule-Based?** Regex check takes ~1ms, while an LLM check takes ~2s. Rule-based security ensures "safety is faster than the attack" and prevents denial-of-wallet attacks.
-> 
+>
 
 ---
 
@@ -566,7 +955,7 @@ async def log_ingestion(source_file, chunk_count, vector_ids):
 # 🔄 n8n Data Pipeline — Setup & Testing Guide
 
 > **Phase 1.5** | Document Ingestion PipelineThis guide walks you through starting all services with Docker and testing the full Ingestion → Embedding pipeline through the n8n UI.
-> 
+>
 
 ---
 
@@ -636,7 +1025,7 @@ docker-compose up -d --build
 ```
 
 > ⏳ First run takes 5–10 minutes. The Embedding Service downloads the AI model (~90MB).
-> 
+>
 
 ### Step 2: Verify All Services Are Healthy
 
@@ -699,12 +1088,12 @@ http://localhost:6333/dashboard
 ### **🧠 Logic Deep-Dive: Query Orchestration**
 
 > **The Safety Gate (Guardrail):** The first node calls the Guardrail service. If it fails, the workflow skips all AI nodes and returns a rejection, saving GPU cycles.
-> 
-> 
+>
+>
 > **The Intelligent Switch (Router):** If allowed, the Router Agent branches logic. Branch A (factual_qa) proceeds to retrieval; Branch B (out_of_scope) returns a domain restriction message.
-> 
+>
 > **The Unified Formatter:** Regardless of the path, the final code node normalizes the output into a consistent JSON schema: `{ "answer": "...", "citations": [], "intent": "..." }`.
-> 
+>
 
 ---
 
@@ -884,7 +1273,7 @@ smart-building-ai/
 ## Phase 1: Foundation — Week 1–2
 
 > **Goal:** Infrastructure up and running. Documents can be ingested and stored.
-> 
+>
 
 | # | Task | Priority | Deliverable |
 | --- | --- | --- | --- |
@@ -902,14 +1291,14 @@ smart-building-ai/
 ### ✅ Phase 1 Milestone
 
 > Ingest a sample Smart Building PDF → verify chunks are stored in Qdrant → metadata logged in PostgreSQL.
-> 
+>
 
 ---
 
 ## Phase 2: Core RAG — Week 3–4
 
 > **Goal:** Users can ask questions and get cited answers.
-> 
+>
 
 | # | Task | Priority | Deliverable |
 | --- | --- | --- | --- |
@@ -924,14 +1313,14 @@ smart-building-ai/
 ### ✅ Phase 2 Milestone
 
 > Ask "What is the HVAC maintenance schedule for Building A?" → get a correct, cited answer from ingested documents.
-> 
+>
 
 ---
 
 ## Phase 3: Chat UI + MVP Ship — Week 5–6
 
 > **Goal:** Working product with a user interface. **This is MVP completion.**
-> 
+>
 
 | # | Task | Priority | Deliverable |
 | --- | --- | --- | --- |
@@ -946,14 +1335,14 @@ smart-building-ai/
 ### ✅ Phase 3 Milestone — 🎉 MVP COMPLETE
 
 > Full system running on Mini Mac: user opens Chat UI → asks a question → gets a cited answer from Smart Building documents.
-> 
+>
 
 ---
 
 ## Phase 4: Advanced Features — Week 7–8 (Post-MVP)
 
 > **Goal:** Expand capabilities based on user feedback.
-> 
+>
 
 | # | Task | Priority | Deliverable |
 | --- | --- | --- | --- |
@@ -1009,7 +1398,7 @@ smart-building-ai/
 ```
 
 > **~80% of the work is PC-compatible.** When the Mac arrives, it's mostly deployment and tuning.
-> 
+>
 
 ---
 
@@ -1190,15 +1579,15 @@ A **multi-agent, RAG-based** (Retrieval-Augmented Generation) AI system that ing
 Since this is your first LLM project, here's the key idea:
 
 > **You don't fine-tune an LLM on your data.** Instead, you:
-> 
+>
 > 1. **Chunk** your documents into small pieces
 > 2. **Embed** each chunk into a vector (a numerical fingerprint)
 > 3. **Store** those vectors in a vector database
 > 4. At query time, **retrieve** the most relevant chunks
 > 5. **Feed** those chunks + the user's question to the LLM as context
-> 
+>
 > This is called **RAG** — and it's the industry standard for "AI over local data."
-> 
+>
 
 ---
 
@@ -1284,7 +1673,7 @@ graph TB
 
 > [!TIP]
 Use a **local** embedding model if data privacy is critical (Smart Building data often is). `all-MiniLM-L6-v2` runs on CPU and is free.
-> 
+>
 
 ---
 
@@ -1527,7 +1916,7 @@ smart-building-ai/
 
 > [!IMPORTANT]
 **Discuss these with your supervisor:**
-> 
+>
 > 1. **Local vs Cloud LLM?** — If data is sensitive (building blueprints, access codes), go **100% local** with Ollama
 > 2. **Which Vector DB?** — Qdrant (production-grade) vs ChromaDB (simpler, good for prototyping)
 > 3. **Chat UI framework?** — Next.js 14 chosen for custom SSE streaming, glassmorphism design, and multi-session sidebar.
@@ -1717,13 +2106,13 @@ graph TD
 
 **Week 2 Deliverables:**
 
-✅ **Deterministic Guardrails**: Regex-based input validation layer. 
+✅ **Deterministic Guardrails**: Regex-based input validation layer.
 
-✅ **Intent-Based Router**: LLM classifier for domain restriction. 
+✅ **Intent-Based Router**: LLM classifier for domain restriction.
 
-✅ **Unified Response Schema**: Normalized JSON output for chat stability. 
+✅ **Unified Response Schema**: Normalized JSON output for chat stability.
 
-✅ **Query Orchestrator**: 9-node n8n workflow with error handling. 
+✅ **Query Orchestrator**: 9-node n8n workflow with error handling.
 
 ✅ **Security Hardening**: 100% block rate on OWASP injection tests.
 
@@ -1830,7 +2219,7 @@ graph TD
 2. **SRP in UI APIs:** Decoupling the SSE parse logic from React state rendering makes handling arbitrary JSON string drops perfectly stable.
 3. **The Importance of "I Don't Know":** A core breakthrough was proving the system defaults to safety instead of making up answers, fulfilling the prime directive of Enterprise RAG.
 
- 
+
 
 ---
 
@@ -1860,7 +2249,7 @@ graph TD
     Rerank --> History["💬 History<br/>(Last 5 Turns)"]
     History --> LLM["🧠 LLM Provider<br/>(Qwen3-32B / DeepSeek R1)"]
     LLM -- "Token-by-Token SSE" --> NextJS
-    
+
     subgraph "Knowledge Base"
         Upload["📤 /ingest"] --> Ingest["📄 Three-Pass<br/>(PyMuPDF → Docling → Tesseract)"]
         Ingest --> Embed["🔢 Embedding<br/>(all-MiniLM-L6-v2)"]
@@ -2048,4 +2437,3 @@ If we link the local n8n instance to an agentic platform like **OpenClaw**:
 - [ ]  Document security boundaries and data flow diagrams
 
 ---
-

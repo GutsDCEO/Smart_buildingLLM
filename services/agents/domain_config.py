@@ -19,20 +19,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import yaml
+import yaml  # type: ignore
 
 logger = logging.getLogger(__name__)
 
 # Default paths — Docker mount at /config/domains, fallback to project-relative
 _DOCKER_CONFIG_DIR = Path("/config/domains")
-_PROJECT_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config" / "domains"
-_DEFAULT_CONFIG_DIR = _DOCKER_CONFIG_DIR if _DOCKER_CONFIG_DIR.exists() else _PROJECT_CONFIG_DIR
+_PROJECT_CONFIG_DIR = (
+    Path(__file__).resolve().parent.parent.parent / "config" / "domains"
+)
+_DEFAULT_CONFIG_DIR = (
+    _DOCKER_CONFIG_DIR if _DOCKER_CONFIG_DIR.exists() else _PROJECT_CONFIG_DIR
+)
 _DEFAULT_DOMAIN = "smart_building"
 
 
 @dataclass(frozen=True)
 class RetrievalConfig:
     """Retrieval pipeline settings."""
+
     top_k_retrieval: int = 15
     top_n_reranked: int = 5
     min_relevance_score: float = 0.25
@@ -41,12 +46,14 @@ class RetrievalConfig:
 @dataclass(frozen=True)
 class MemoryConfig:
     """Conversation memory settings."""
+
     max_history_turns: int = 5
 
 
 @dataclass(frozen=True)
 class GuardrailConfig:
     """Input validation settings."""
+
     max_query_length: int = 2000
     min_query_length: int = 3
     scope_keywords: tuple[str, ...] = ()
@@ -59,6 +66,7 @@ class DomainConfiguration:
 
     All prompt templates have placeholders already resolved.
     """
+
     # Domain identity
     name: str = "Smart Building AI"
     description: str = ""
@@ -96,6 +104,7 @@ def load_domain_config(
         ValueError: If the YAML is malformed or missing required fields.
     """
     import os
+
     domain_name = domain_name or os.getenv("DOMAIN_CONFIG", _DEFAULT_DOMAIN)
     config_dir = config_dir or _DEFAULT_CONFIG_DIR
 
@@ -115,7 +124,9 @@ def load_domain_config(
         raw = yaml.safe_load(f)
 
     if not isinstance(raw, dict):
-        raise ValueError(f"Invalid domain config: expected a YAML mapping, got {type(raw)}")
+        raise ValueError(
+            f"Invalid domain config: expected a YAML mapping, got {type(raw)}"
+        )
 
     # Extract sections with safe defaults
     domain_section = raw.get("domain", {})

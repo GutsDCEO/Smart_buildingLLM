@@ -115,7 +115,7 @@ export default function ChatMessage({ message }: ChatMessageProps) {
               <div className="citations-list">
                 {message.citations.map((c, i) => (
                   <CitationCard
-                    key={`${c.source_file}-${c.chunk_index}`}
+                    key={`${c.source_file}-${c.chunk_index}-${i}`}
                     citation={c}
                     index={i}
                   />

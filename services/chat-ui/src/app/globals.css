@@ -1322,3 +1322,308 @@ button { font-family: inherit; cursor: pointer; }
 }
 
 .login-hint strong { color: var(--accent); }
+
+/* ══════════════════════════════════════════════════════════════
+   TEMPLATE CENTER (Phase 6)
+   ══════════════════════════════════════════════════════════════ */
+.tmpl-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+}
+
+.tmpl-header {
+  padding: 20px 28px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tmpl-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.tmpl-subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 3px;
+}
+
+.tmpl-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Drag & Drop Zone */
+.tmpl-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: var(--radius-lg);
+  padding: 40px 20px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.02);
+  transition: all 0.2s ease;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+
+.tmpl-dropzone:hover,
+.tmpl-dropzone--dragover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 0 20px var(--accent-glow);
+}
+
+.tmpl-dropzone-icon {
+  font-size: 40px;
+}
+
+.tmpl-dropzone-text {
+  font-size: 14px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.tmpl-dropzone-subtext {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Progress Tracker */
+.tmpl-progress-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.tmpl-progress-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 14px;
+}
+
+.tmpl-progress-stage {
+  font-weight: 600;
+  color: var(--accent);
+}
+
+.tmpl-progress-pct {
+  color: var(--text-secondary);
+}
+
+.tmpl-progress-bar-bg {
+  height: 8px;
+  background: var(--bg-input);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.tmpl-progress-bar-fg {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), #b794f4);
+  transition: width 0.3s ease;
+}
+
+.tmpl-progress-message {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Fields Table */
+.tmpl-table-wrapper {
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.tmpl-table-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-primary);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.tmpl-table-scroll {
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.tmpl-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.tmpl-table th {
+  padding: 12px 20px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.1);
+  letter-spacing: 0.05em;
+}
+
+.tmpl-table td {
+  padding: 14px 20px;
+  font-size: 13px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+  vertical-align: middle;
+}
+
+.tmpl-table tr:last-child td {
+  border-bottom: none;
+}
+
+.tmpl-table tr:hover td {
+  background: rgba(255, 255, 255, 0.01);
+}
+
+/* Badges */
+.tmpl-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.tmpl-badge--acroform { background: rgba(66, 153, 225, 0.15); color: #63b3ed; }
+.tmpl-badge--bracket { background: rgba(237, 137, 54, 0.15); color: #fbd38d; }
+.tmpl-badge--underscore { background: rgba(72, 187, 120, 0.15); color: #68d391; }
+.tmpl-badge--mustache { background: rgba(159, 122, 234, 0.15); color: #c4a8f8; }
+
+.tmpl-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.tmpl-status--pending { color: var(--text-muted); }
+.tmpl-status--loading { color: var(--accent-amber); animation: pulse 1.5s infinite; }
+.tmpl-status--success { color: var(--accent-green); }
+.tmpl-status--failed { color: var(--accent-red); }
+
+/* Download Section */
+.tmpl-download-card {
+  background: linear-gradient(135deg, rgba(159, 122, 234, 0.15), rgba(72, 187, 120, 0.1));
+  border: 1px solid rgba(159, 122, 234, 0.3);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  animation: fadeUp 0.3s ease-out;
+}
+
+.tmpl-download-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tmpl-download-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.tmpl-download-sub {
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+.tmpl-download-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 12px 24px;
+  font-weight: 600;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 4px 14px var(--accent-glow);
+}
+
+.tmpl-download-btn:hover {
+  background: #b794f4;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 20px var(--accent-glow);
+}
+
+.tmpl-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.tmpl-btn-primary {
+  background: var(--accent);
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.tmpl-btn-primary:hover:not(:disabled) {
+  background: #b794f4;
+  transform: translateY(-1px);
+}
+
+.tmpl-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.tmpl-btn-secondary {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 10px 20px;
+  border-radius: var(--radius-md);
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 0.15s ease;
+}
+
+.tmpl-btn-secondary:hover {
+  background: var(--bg-hover);
+}
+
+.tmpl-error-box {
+  background: rgba(252, 129, 129, 0.08);
+  border: 1px solid rgba(252, 129, 129, 0.2);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  color: var(--accent-red);
+  font-size: 13px;
+}

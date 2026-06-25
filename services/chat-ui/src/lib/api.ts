@@ -3,13 +3,24 @@
  *
  * SRP: Only handles HTTP communication. No UI logic here.
  * DIP: Chat UI depends on this abstraction, not on fetch internals.
- * OWASP A02: API URL from env var — never hardcoded.
+ * OWASP A02: API URL is a same-origin proxy path — never a hardcoded host,
+ *            never baked into the client bundle via NEXT_PUBLIC_.
  * OWASP A01: All protected calls use authFetch (auto-attaches JWT + refreshes).
+ *
+ * WHY /api/backend instead of NEXT_PUBLIC_API_URL?
+ * NEXT_PUBLIC_ variables are compiled into the JS bundle at startup, so
+ * "localhost:8003" gets shipped to every browser — including a director's
+ * laptop where localhost points to their own machine, not the dev server.
+ * Using a same-origin path (/api/backend) routes through the Next.js proxy
+ * (next.config.ts rewrites), which forwards server-side to FastAPI.
+ * This works from any device on any network with zero .env changes.
  */
 
 import { authFetch, authHeaders } from "@/lib/auth";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003";
+// Same-origin proxy path — Next.js rewrites this to BACKEND_URL server-side.
+// Works from any device; no cross-origin requests, no CORS required.
+const API_BASE = "/api/backend";
 
 
 // ── Event Types ──────────────────────────────────────────────────
@@ -240,6 +251,155 @@ export async function* streamChat(
         } catch { /* skip malformed */ }
       }
     }
+  }
+}
+
+// ── Template Types ───────────────────────────────────────────────
+
+export interface TemplateField {
+  field_name: string;
+  field_type: "acroform" | "bracket" | "underscore" | "mustache";
+  page_number: number;
+  current_value?: string | null;
+}
+
+export interface TemplateAnalyzeResponse {
+  file_id: string;
+  filename: string;
+  total_fields: number;
+  fields: TemplateField[];
+}
+
+export interface TemplateStatusEvent {
+  stage: "opening" | "analyzing" | "filling" | "writing" | "saving";
+  message: string;
+  progress?: number;
+  total?: number;
+}
+
+export interface TemplateFieldEvent {
+  field_name: string;
+  status: "filled" | "failed";
+  value?: string;
+  confidence?: number;
+  error?: string;
+}
+
+export interface TemplateFillError {
+  field_name: string;
+  reason: string;
+}
+
+export interface TemplateCompleteEvent {
+  file_id: string;
+  filename: string;
+  fields_filled: number;
+  fields_failed: number;
+  field_errors: TemplateFillError[];
+  download_url: string;
+  status: "completed" | "completed_with_errors";
+}
+
+export interface TemplateErrorEvent {
+  message: string;
+}
+
+export type TemplateSSEEvent =
+  | { type: "status"; data: TemplateStatusEvent }
+  | { type: "field"; data: TemplateFieldEvent }
+  | { type: "complete"; data: TemplateCompleteEvent }
+  | { type: "error"; data: TemplateErrorEvent }
+  | { type: "done"; data: {} };
+
+// ── Template API (auth required) ──────────────────────────────────
+
+export async function analyzeTemplate(file: File): Promise<TemplateAnalyzeResponse | null> {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    const res = await authFetch(`${API_BASE}/templates/analyze`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+export async function* streamFillTemplate(
+  fileId: string,
+  fields?: string[],
+  signal?: AbortSignal
+): AsyncGenerator<TemplateSSEEvent> {
+  let res: Response;
+  try {
+    res = await authFetch(`${API_BASE}/templates/fill`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        file_id: fileId,
+        fields: fields || null,
+      }),
+      signal,
+    });
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : "Network error";
+    yield { type: "error", data: { message: msg } };
+    return;
+  }
+
+  if (!res.ok) {
+    const status = res.status;
+    const message = status === 401
+      ? "Session expired. Please log in again."
+      : `Server error (${status})`;
+    yield { type: "error", data: { message } };
+    return;
+  }
+
+  const reader = res.body?.getReader();
+  if (!reader) return;
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    buffer += decoder.decode(value, { stream: true });
+    const blocks = buffer.split("\n\n");
+    buffer = blocks.pop() ?? "";
+
+    for (const block of blocks) {
+      const lines = block.split("\n");
+      let eventType = "";
+      let eventData = "";
+      for (const line of lines) {
+        if (line.startsWith("event: ")) eventType = line.slice(7).trim();
+        else if (line.startsWith("data: ")) eventData = line.slice(6);
+      }
+      if (eventType && eventData) {
+        try {
+          yield { type: eventType, data: JSON.parse(eventData) } as TemplateSSEEvent;
+        } catch { /* skip malformed */ }
+      }
+    }
+  }
+}
+
+export async function downloadTemplate(fileId: string): Promise<Blob | null> {
+  try {
+    const res = await authFetch(`${API_BASE}/templates/download/${encodeURIComponent(fileId)}`);
+    if (!res.ok) return null;
+    return await res.blob();
+  } catch {
+    return null;
   }
 }
 

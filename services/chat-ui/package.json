@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_OPTIONS='--max-old-space-size=256' next dev -p 3001",
     "build": "next build",
-    "start": "next start",
+    "start": "PORT=3001 node -e \"const fs=require('fs'), path=require('path'); const s=path.resolve('.next/static'), t=path.resolve('.next/standalone/services/chat-ui/.next/static'); if(fs.existsSync(s)){ fs.mkdirSync(path.dirname(t),{recursive:true}); try{fs.unlinkSync(t)}catch(e){} try{fs.symlinkSync(path.relative(path.dirname(t),s),t,'dir')}catch(e){} } const sp=path.resolve('public'), tp=path.resolve('.next/standalone/services/chat-ui/public'); if(fs.existsSync(sp)){ try{fs.unlinkSync(tp)}catch(e){} try{fs.symlinkSync(path.relative(path.dirname(tp),sp),tp,'dir')}catch(e){} } const p=fs.existsSync('.next/standalone/server.js')?'.next/standalone/server.js':'.next/standalone/services/chat-ui/server.js'; require('child_process').fork(p)\"",
     "lint": "eslint"
   },
   "dependencies": {

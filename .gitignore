@@ -138,6 +138,9 @@ venv.bak/
 .dmypy.json
 dmypy.json
 
+# ruff
+.ruff_cache/
+
 # Pyre type checker
 .pyre/
 
@@ -168,6 +171,7 @@ n8n/config/
 *.log
 **/wheels/
 *.resolved
+/*.pdf
 
 
 # AI/ML Specific
@@ -235,6 +239,8 @@ auth.json
 # Agent Frameworks
 .agents/
 .gemini/
+.kilo/
+.opencode/
 
 # Backups and Temporary Files
 *.backup

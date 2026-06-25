@@ -182,6 +182,7 @@ services:
       - ./services/agents:/app
       - ./tests:/app/tests
       - ./data/ingest:/data/ingest
+      - ./data/outputs:/data/outputs
       - ./config:/config
       - hf_cache:/home/appuser/.cache
     networks:
@@ -201,57 +202,15 @@ services:
 
 
   # ──────────────────────────────────────────────────────────
-  # Local LLM Engine — Ollama
+  # Local LLM Engine — Ollama (removed, using host Ollama)
   # ──────────────────────────────────────────────────────────
-  ollama:
-    image: ollama/ollama:latest
-    container_name: sb_ollama
-    restart: unless-stopped
-    logging: *default-logging
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    networks:
-      - sb_network
-    # On Mac: Apple Silicon GPU is auto-detected.
-    # On Windows/Linux with NVIDIA: uncomment the deploy block below.
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
 
   # ──────────────────────────────────────────────────────────────
   # Chat UI — Next.js Interface (Phase 3)
   # ──────────────────────────────────────────────────────────────
-  chat-ui:
-    build:
-      context: ./services/chat-ui
-      dockerfile: Dockerfile
-      args:
-        - NEXT_PUBLIC_API_URL=http://localhost:8003
-    container_name: sb_chat_ui
-    restart: unless-stopped
-    logging: *default-logging
-    env_file:
-      - .env
-    environment:
-      - NODE_ENV=production
-    ports:
-      - "${CHAT_UI_PORT:-3000}:3000"
-    networks:
-      - sb_network
-    depends_on:
-      agents:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
+  # ──────────────────────────────────────────────────────────────
+  # Chat UI — Next.js Interface (removed, run manually)
+  # ──────────────────────────────────────────────────────────────
 
   # ──────────────────────────────────────────────────────────────
   # Named Volumes — Persistent Storage

@@ -9,7 +9,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003";
 
 // ── Types ─────────────────────────────────────────────────────────
 
-export type SidebarTab = "chat" | "knowledge";
+export type SidebarTab = "chat" | "knowledge" | "templates";
 
 export interface SessionInfo {
   session_id: string;
@@ -179,6 +179,21 @@ export default function Sidebar({
           {/* Popup Menu (above profile) */}
           {menuOpen && (
             <div className="profile-menu" id="profile-menu">
+              <button
+                className="profile-menu-item"
+                id="menu-templates"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onTabChange("templates");
+                }}
+              >
+                <span className="profile-menu-icon">📑</span>
+                <span>Templates Center</span>
+                {activeTab === "templates" && (
+                  <span className="profile-menu-check">✓</span>
+                )}
+              </button>
+              <div className="profile-menu-divider" />
               {isAdmin && (
                 <>
                   <button

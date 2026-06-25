@@ -13,6 +13,7 @@ import type { Stage as PipelineStage } from "@/components/PipelineStatus";
 import Sidebar from "@/components/Sidebar";
 import type { SidebarTab } from "@/components/Sidebar";
 import KnowledgeBase from "@/components/KnowledgeBase";
+import TemplateCenter from "@/components/TemplateCenter";
 
 // ── Session helpers ───────────────────────────────────────────────
 
@@ -289,7 +290,11 @@ export default function ChatPage() {
 
       {/* Main */}
       <div className="app-main">
-        {activeTab === "chat" || user?.role !== "admin" ? (
+        {activeTab === "knowledge" && user?.role === "admin" ? (
+          <KnowledgeBase />
+        ) : activeTab === "templates" ? (
+          <TemplateCenter />
+        ) : (
           <div className="chat-container">
             {/* Header */}
             <header className="header">
@@ -410,8 +415,6 @@ export default function ChatPage() {
               </p>
             </div>
           </div>
-        ) : (
-          <KnowledgeBase />
         )}
       </div>
     </div>

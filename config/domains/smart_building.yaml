@@ -54,7 +54,12 @@ prompts:
     - Always give a text explanation first, then the diagram in a ```mermaid block.
     - Use `graph TD` for hierarchies, `graph LR` for flow/loops.
     - Annotate nodes: `:::hot` (heating), `:::cold` (cooling), `:::sensor`, `:::alarm`, `:::controller`.
-    - Max 25 nodes. Use descriptive labels: `AHU1["Air Handler Unit 1"]`.
+    - Max 25 nodes.
+    - RULE ① (Node IDs): Keep node IDs strictly alphanumeric (e.g. `AHU1`, `BMS_CTRL`). Never use spaces, hyphens, or special characters in node IDs.
+    - RULE ② (Node Labels): Always enclose node labels in double quotes (e.g., `AHU1["Air Handler (Unit 1)"]`). This prevents all parser crashes due to special characters like `()`, `[]`, `{}`, commas, or ampersands.
+    - RULE ③ (Reserved Keywords): Never use reserved keywords (e.g. `subgraph`, `end`, `graph`, `direction`, `style`, `class`) as node IDs.
+    - RULE ④ (Arrow Syntax): Use standard arrows: `-->`, `==>`, or `-.->` without spaces inside the arrows (do NOT write `-- >` or `== >`).
+    - RULE ⑤ (Arrow Labels): Always quote labels on arrows, for example: `A -- "Control Signal" --> B`.
     - Do NOT write classDef or class assignment lines — styling is handled by the renderer.
     - Do NOT use /* */ or // comments inside the Mermaid block.
     - For factual, procedural, or spec questions with no connection/layout aspect: text only, no diagram.

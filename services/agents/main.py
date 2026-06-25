@@ -7,6 +7,7 @@ All business logic is delegated to:
   - router_agent     (intent classification)
   - qa_agent         (RAG pipeline)
   - auth_service     (authentication & authorization)
+  - template_service (template filling — Phase 6)
 """
 
 from __future__ import annotations
@@ -22,13 +23,18 @@ from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+
 from config import settings
 from models import (
-    AskRequest, AskResponse,
+    AskRequest,
+    AskResponse,
     ChatRequest,
-    GuardRequest, GuardResponse,
-    HealthResponse, IntentType,
-    RouteRequest, RouteResponse,
+    GuardRequest,
+    GuardResponse,
+    HealthResponse,
+    IntentType,
+    RouteRequest,
+    RouteResponse,
     IngestResponse,
 )
 from guardrail_agent import GuardrailAgent
@@ -43,6 +49,9 @@ from database import connect_db, disconnect_db
 from auth_router import router as auth_router
 from auth_middleware import get_current_user, require_admin
 from auth_models import UserResponse
+from template_router import router as template_router
+from template_router import set_service as set_template_service
+from template_service import TemplateService
 import document_service
 import history_service
 import sync_service
@@ -53,6 +62,7 @@ llm_client = None  # type: ignore[assignment]
 guardrail_agent = None  # type: ignore[assignment]
 router_agent = None  # type: ignore[assignment]
 qa_agent = None  # type: ignore[assignment]
+template_service = None  # type: ignore[assignment]
 
 # ──────────────────────────────────────────────────────────────
 # Logging Setup
@@ -70,7 +80,7 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Connect to Qdrant and LLM pool at startup; disconnect at shutdown."""
-    global llm_client, guardrail_agent, router_agent, qa_agent
+    global llm_client, guardrail_agent, router_agent, qa_agent, template_service
     logger.info("Starting Agents Service...")
 
     try:
@@ -99,6 +109,11 @@ async def lifespan(app: FastAPI):
     router_agent = RouterAgent(llm_client)
     qa_agent = QAAgent(llm_client)
 
+    # Initialize Template Service (Phase 6) — reuses qa_agent for RAG filling
+    template_service = TemplateService(qa_agent)
+    set_template_service(template_service)
+    logger.info("Template Service ready. Output dir: %s", settings.template_output_dir)
+
     logger.info(
         "Agents Service ready. Domain: '%s' v%s",
         domain_config.name,
@@ -126,15 +141,23 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── Auth Router ────────────────────────────────────────────────
+# ── Auth Router ────────────────────────────────────────────
 app.include_router(auth_router)
+
+# ── Template Router (Phase 6) ──────────────────────────────
+app.include_router(template_router)
 
 # ──────────────────────────────────────────────────────────────
 # CORS — Allow Chat UI to call this API (OWASP A01/A05)
 # ──────────────────────────────────────────────────────────────
+cors_origins = [
+    origin.strip()
+    for origin in settings.chat_ui_cors_origins.split(",")
+    if origin.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.chat_ui_cors_origin],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "PATCH"],
     allow_headers=["*"],
@@ -144,6 +167,7 @@ app.add_middleware(
 # ──────────────────────────────────────────────────────────────
 # Endpoints
 # ──────────────────────────────────────────────────────────────
+
 
 @app.get("/health", response_model=HealthResponse, tags=["System"])
 async def health_check() -> HealthResponse:
@@ -192,7 +216,9 @@ async def route(
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 
     result = await router_agent.classify(request)
-    logger.info("Route result: intent=%s (%.2f)", result.intent.value, result.confidence)
+    logger.info(
+        "Route result: intent=%s (%.2f)", result.intent.value, result.confidence
+    )
     return result
 
 
@@ -274,10 +300,14 @@ async def ingest(
         ingest_path = Path(settings.ingest_folder) / file.filename
         try:
             ingest_path.write_bytes(content)
-            logger.info("Saved uploaded file to '%s' (%d bytes).", ingest_path, len(content))
+            logger.info(
+                "Saved uploaded file to '%s' (%d bytes).", ingest_path, len(content)
+            )
         except OSError as save_err:
             # Non-fatal: log and continue — ingestion can still succeed.
-            logger.error("Could not save '%s' to ingest folder: %s", file.filename, save_err)
+            logger.error(
+                "Could not save '%s' to ingest folder: %s", file.filename, save_err
+            )
 
         # ── Step 2: Extract text + embed vectors ─────────────────────────────
         result = await ingestion_gateway.ingest_file(
@@ -314,6 +344,7 @@ async def ingest(
 # Chat UI can show real-time pipeline progress + streaming text.
 # ──────────────────────────────────────────────────────────────
 
+
 def _sse_event(event: str, data: dict | list | str) -> str:
     """Format a Server-Sent Event string."""
     payload = json.dumps(data) if not isinstance(data, str) else data
@@ -342,48 +373,70 @@ async def _chat_stream(
     accumulated_answer = ""
     try:
         # ── Stage 1: Guardrail ──
-        yield _sse_event("status", {"stage": "guardrail", "message": "Checking input safety..."})
+        yield _sse_event(
+            "status", {"stage": "guardrail", "message": "Checking input safety..."}
+        )
 
         guard_result = guardrail_agent.validate(GuardRequest(question=question))
         if not guard_result.allowed:
             logger.warning("Chat blocked by guardrail: %s", guard_result.reason)
-            yield _sse_event("error", {
-                "stage": "guardrail",
-                "message": guard_result.reason,
-            })
-            yield _sse_event("done", {"answered_at": datetime.now(timezone.utc).isoformat()})
+            yield _sse_event(
+                "error",
+                {
+                    "stage": "guardrail",
+                    "message": guard_result.reason,
+                },
+            )
+            yield _sse_event(
+                "done", {"answered_at": datetime.now(timezone.utc).isoformat()}
+            )
             return
 
         sanitized = guard_result.sanitized_question
 
         # ── Stage 2: Router ──
-        yield _sse_event("status", {"stage": "router", "message": "Classifying intent..."})
+        yield _sse_event(
+            "status", {"stage": "router", "message": "Classifying intent..."}
+        )
 
         route_result = await router_agent.classify(RouteRequest(question=sanitized))
 
         if route_result.intent == IntentType.OUT_OF_SCOPE:
             logger.info("Chat out_of_scope: %s", sanitized[:60])
-            yield _sse_event("token", {
-                "text": domain_config.out_of_scope_message,
-            })
-            yield _sse_event("done", {
-                "answered_at": datetime.now(timezone.utc).isoformat(),
-                "intent": "out_of_scope",
-            })
+            yield _sse_event(
+                "token",
+                {
+                    "text": domain_config.out_of_scope_message,
+                },
+            )
+            yield _sse_event(
+                "done",
+                {
+                    "answered_at": datetime.now(timezone.utc).isoformat(),
+                    "intent": "out_of_scope",
+                },
+            )
             return
 
         # ── Stage 3: Vector Search + Re-Rank ──
-        yield _sse_event("status", {"stage": "retrieval", "message": "Searching documents..."})
+        yield _sse_event(
+            "status", {"stage": "retrieval", "message": "Searching documents..."}
+        )
 
         # Embed the question via Embedding Service
         query_vector = await qa_agent._embed_question(sanitized)
 
         if not qdrant_search.is_connected:
-            yield _sse_event("error", {
-                "stage": "retrieval",
-                "message": "Vector database is not available. Please try again later.",
-            })
-            yield _sse_event("done", {"answered_at": datetime.now(timezone.utc).isoformat()})
+            yield _sse_event(
+                "error",
+                {
+                    "stage": "retrieval",
+                    "message": "Vector database is not available. Please try again later.",
+                },
+            )
+            yield _sse_event(
+                "done", {"answered_at": datetime.now(timezone.utc).isoformat()}
+            )
             return
 
         results = qdrant_search.search(
@@ -392,16 +445,23 @@ async def _chat_stream(
         )
 
         if not results:
-            yield _sse_event("token", {
-                "text": "I don't have any relevant documents to answer this question. "
-                        "Please ensure documents have been ingested first.",
-            })
+            yield _sse_event(
+                "token",
+                {
+                    "text": "I don't have any relevant documents to answer this question. "
+                    "Please ensure documents have been ingested first.",
+                },
+            )
             yield _sse_event("citations", [])
-            yield _sse_event("done", {"answered_at": datetime.now(timezone.utc).isoformat()})
+            yield _sse_event(
+                "done", {"answered_at": datetime.now(timezone.utc).isoformat()}
+            )
             return
 
         # Re-rank for precision
-        yield _sse_event("status", {"stage": "reranking", "message": "Re-ranking results..."})
+        yield _sse_event(
+            "status", {"stage": "reranking", "message": "Re-ranking results..."}
+        )
         reranked = reranker.rerank(
             question=sanitized,
             results=results,
@@ -413,16 +473,21 @@ async def _chat_stream(
             session_id,
             limit=domain_config.memory.max_history_turns * 2,
         )
-        history_dicts = [
-            {"role": msg["role"], "content": msg["content"]}
-            for msg in history
-        ] if history else None
+        history_dicts = (
+            [{"role": msg["role"], "content": msg["content"]} for msg in history]
+            if history
+            else None
+        )
 
         # ── Stage 5: Stream LLM Answer ──
-        yield _sse_event("status", {"stage": "generating", "message": "Generating answer..."})
+        yield _sse_event(
+            "status", {"stage": "generating", "message": "Generating answer..."}
+        )
 
         context_prompt = QAAgent._build_context_prompt(
-            sanitized, reranked, history=history_dicts,
+            sanitized,
+            reranked,
+            history=history_dicts,
         )
         citations = [
             {
@@ -446,34 +511,49 @@ async def _chat_stream(
 
         # Save the assistant's full response to the database
         if accumulated_answer:
-            await history_service.save_message(session_id, "assistant", accumulated_answer, user_id=user_id)
+            await history_service.save_message(
+                session_id, "assistant", accumulated_answer, user_id=user_id
+            )
 
         # Send citations after full answer
         yield _sse_event("citations", citations)
-        yield _sse_event("done", {
-            "answered_at": datetime.now(timezone.utc).isoformat(),
-            "intent": "factual_qa",
-        })
+        yield _sse_event(
+            "done",
+            {
+                "answered_at": datetime.now(timezone.utc).isoformat(),
+                "intent": "factual_qa",
+            },
+        )
 
         logger.info("/chat complete: %d citations", len(citations))
 
     except RuntimeError as exc:
         # Service-level errors (Ollama down, Embedding timeout, etc.)
         logger.error("Chat pipeline error: %s", exc)
-        yield _sse_event("error", {
-            "stage": "error",
-            "message": str(exc),
-        })
-        yield _sse_event("done", {"answered_at": datetime.now(timezone.utc).isoformat()})
+        yield _sse_event(
+            "error",
+            {
+                "stage": "error",
+                "message": str(exc),
+            },
+        )
+        yield _sse_event(
+            "done", {"answered_at": datetime.now(timezone.utc).isoformat()}
+        )
 
-    except Exception as exc:
+    except Exception:
         # Unexpected errors — OWASP A09: log full trace, return safe message
         logger.exception("Unexpected error in /chat stream")
-        yield _sse_event("error", {
-            "stage": "error",
-            "message": "An unexpected error occurred. Please try again.",
-        })
-        yield _sse_event("done", {"answered_at": datetime.now(timezone.utc).isoformat()})
+        yield _sse_event(
+            "error",
+            {
+                "stage": "error",
+                "message": "An unexpected error occurred. Please try again.",
+            },
+        )
+        yield _sse_event(
+            "done", {"answered_at": datetime.now(timezone.utc).isoformat()}
+        )
 
 
 @app.post("/chat", tags=["Chat"])
@@ -502,10 +582,14 @@ async def chat(
 
     # Save the user message to the database (with user_id for session isolation)
     session_id = request.session_id or "default-session"
-    await history_service.save_message(session_id, "user", request.question, user_id=user.id)
+    await history_service.save_message(
+        session_id, "user", request.question, user_id=user.id
+    )
 
     return StreamingResponse(
-        _chat_stream(request.question, session_id, request.enable_thinking, user_id=user.id),
+        _chat_stream(
+            request.question, session_id, request.enable_thinking, user_id=user.id
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -519,9 +603,12 @@ async def chat(
 # /documents — Knowledge Base Management (Phase 4)
 # ──────────────────────────────────────────────────────────────
 
+
 @app.get("/documents", tags=["Knowledge Base"])
 async def list_documents(
-    file_type: Optional[str] = Query(None, description="Filter by file type: PDF, Word, HTML, Text"),
+    file_type: Optional[str] = Query(
+        None, description="Filter by file type: PDF, Word, HTML, Text"
+    ),
     user: UserResponse = Depends(get_current_user),
 ):
     """
@@ -558,6 +645,7 @@ async def delete_document(
     try:
         if qdrant_search.is_connected and qdrant_search._client:
             from qdrant_client.models import Filter, FieldCondition, MatchValue
+
             qdrant_search._client.delete(
                 collection_name=settings.qdrant_collection_name,
                 points_selector=Filter(
@@ -580,6 +668,7 @@ async def delete_document(
 # ──────────────────────────────────────────────────────────────
 # /sessions — Multi-Conversation Management (Phase 5)
 # ──────────────────────────────────────────────────────────────
+
 
 @app.get("/sessions", tags=["Chat"])
 async def list_sessions(
@@ -615,6 +704,7 @@ async def delete_session(
 # /history — Chat History Persistence (Phase 4)
 # ──────────────────────────────────────────────────────────────
 
+
 @app.get("/history/{session_id}", tags=["Chat"])
 async def get_history(
     session_id: str,
@@ -634,6 +724,7 @@ async def get_history(
 # /sync — Local Folder Sync (Phase 4)
 # Scans the /data/ingest mount and ingests any new files.
 # ──────────────────────────────────────────────────────────────
+
 
 @app.post("/sync", tags=["Knowledge Base"])
 async def sync_folder(
