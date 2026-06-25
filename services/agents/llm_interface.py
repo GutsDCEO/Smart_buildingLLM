@@ -61,6 +61,7 @@ class LLMProvider(ABC):
         prompt: str,
         system_prompt: str | None = None,
         temperature: float = 0.1,
+        enable_thinking: bool = False,
     ) -> str:
         """
         Generate a complete text response (non-streaming).
@@ -84,6 +85,7 @@ class LLMProvider(ABC):
         prompt: str,
         system_prompt: str | None = None,
         temperature: float = 0.1,
+        enable_thinking: bool = False,
     ) -> AsyncGenerator[str, None]:
         """
         Stream tokens one-by-one from the LLM.

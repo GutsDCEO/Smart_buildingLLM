@@ -21,7 +21,7 @@ class AgentsSettings(BaseSettings):
 
     # --- Groq Cloud (OWASP A02: secret from env only, never hardcoded) ---
     groq_api_key: str = ""
-    groq_model: str = "deepseek-r1-distill-llama-70b"
+    groq_model: str = "openai/gpt-oss-120b"
     groq_timeout_seconds: int = 60
 
     # --- Qdrant (Vector Search) ---
@@ -58,11 +58,20 @@ class AgentsSettings(BaseSettings):
     # --- Local Ingest Folder (mounted from host) ---
     ingest_folder: str = "/data/ingest"
 
+    # --- Template Filling (Phase 6) ---
+    template_output_dir: str = "/data/outputs"
+    template_max_upload_mb: int = 25
+
     # --- Domain Configuration ---
     domain_config: str = "smart_building"
 
     # --- Chat UI CORS ---
-    chat_ui_cors_origin: str = "http://localhost:3000"
+    # Comma-separated list of allowed origins.
+    # Add your local network IP here for demo sessions:
+    #   e.g. http://localhost:3001,http://192.168.1.50:3001
+    # The proxy in next.config.ts means the browser never calls the backend
+    # directly, so in normal use only the Next.js server origin is needed.
+    chat_ui_cors_origins: str = "http://localhost:3000,http://localhost:3001"
 
     # --- Authentication (JWT) — OWASP A02: secrets from env only ---
     jwt_secret_key: str = ""

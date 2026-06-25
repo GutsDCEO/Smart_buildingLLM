@@ -10,9 +10,16 @@
  *   getStoredUser() verifies BOTH user data AND access token exist.
  *   If either is missing the entire auth state is cleared, guaranteeing
  *   that the login page will never see stale data and bounce back to "/".
+ *
+ * DESIGN NOTE — Same-origin API proxy:
+ *   API calls use /api/backend (proxied by Next.js) instead of a direct
+ *   backend URL. This eliminates CORS entirely and prevents localhost from
+ *   being baked into the JS bundle — the root cause of the demo network error.
  */
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003";
+// Same-origin proxy path — Next.js rewrites /api/backend/:path* to BACKEND_URL.
+// Works identically from localhost, a local IP, or any other device.
+const API_BASE = "/api/backend";
 
 // ── Storage Keys — named constants (no magic strings) ─────────────
 const ACCESS_TOKEN_KEY = "sb_access_token";

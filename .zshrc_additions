@@ -1,2 +1,5 @@
 # ── Plan B: Launch OpenCode Workhorse ──
 alias planb="cd /Users/mac/Smart_buildingLLM && opencode"
+
+# ── Local LLM Swapper (Dev/Brain switcher) ──
+alias sysmode="/Users/mac/Smart_buildingLLM/scripts/sysmode.sh"

@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 # Guardrail Agent DTOs
 # ──────────────────────────────────────────────────────────────
 
+
 class GuardRequest(BaseModel):
     """Input to the Guardrail Agent."""
 
@@ -41,6 +42,7 @@ class GuardResponse(BaseModel):
 # ──────────────────────────────────────────────────────────────
 # Router Agent DTOs
 # ──────────────────────────────────────────────────────────────
+
 
 class IntentType(str, Enum):
     """Supported intent categories for the MVP Router."""
@@ -70,6 +72,7 @@ class RouteResponse(BaseModel):
 # ──────────────────────────────────────────────────────────────
 # Q&A Agent DTOs
 # ──────────────────────────────────────────────────────────────
+
 
 class Citation(BaseModel):
     """A source citation for a chunk used in the answer."""
@@ -128,6 +131,7 @@ class AskResponse(BaseModel):
 # Ingestion Gateway DTO
 # ──────────────────────────────────────────────────────────────
 
+
 class IngestResponse(BaseModel):
     """Response returned after successfully ingesting a document via the Gateway."""
 
@@ -141,6 +145,7 @@ class IngestResponse(BaseModel):
 # Health Check DTO
 # ──────────────────────────────────────────────────────────────
 
+
 class HealthResponse(BaseModel):
     """Response from the /health endpoint."""
 
@@ -149,3 +154,80 @@ class HealthResponse(BaseModel):
     version: str = "0.1.0"
     ollama_reachable: bool = False
     qdrant_reachable: bool = False
+
+
+# ──────────────────────────────────────────────────────────────
+# Template Filling DTOs (Phase 6)
+# ──────────────────────────────────────────────────────────────
+
+
+class TemplateField(BaseModel):
+    """A single extractable field from a template document."""
+
+    field_name: str = Field(..., description="The placeholder label or widget name")
+    field_type: str = Field(
+        ...,
+        description="Detection method: acroform | bracket | underscore | mustache",
+    )
+    page_number: int = Field(..., description="1-indexed page where the field appears")
+    current_value: Optional[str] = Field(
+        default=None, description="Pre-existing value if any"
+    )
+    generated_value: Optional[str] = Field(
+        default=None, description="RAG-generated answer after filling"
+    )
+    confidence: float = Field(
+        default=0.0, description="Best citation relevance score (0.0–1.0)"
+    )
+    error: Optional[str] = Field(
+        default=None, description="Error message if filling failed for this field"
+    )
+
+
+class TemplateAnalyzeResponse(BaseModel):
+    """Response from POST /templates/analyze."""
+
+    file_id: str = Field(..., description="Temporary file ID for subsequent /fill call")
+    filename: str = Field(..., description="Original uploaded filename")
+    total_fields: int = Field(..., description="Number of fillable fields detected")
+    fields: list[TemplateField] = Field(
+        default_factory=list, description="All detected fields with metadata"
+    )
+
+
+class TemplateFillRequest(BaseModel):
+    """Request body for POST /templates/fill."""
+
+    file_id: str = Field(..., description="ID returned from /templates/analyze")
+    fields: Optional[list[str]] = Field(
+        default=None,
+        description="Subset of field names to fill. None = fill all fields.",
+    )
+
+
+class TemplateFillError(BaseModel):
+    """Details about a single field that failed to fill."""
+
+    field_name: str = Field(..., description="Name of the field that failed")
+    reason: str = Field(..., description="Human-readable error reason")
+
+
+class TemplateFillResponse(BaseModel):
+    """Final summary returned as the last SSE event from POST /templates/fill."""
+
+    file_id: str = Field(..., description="ID of the generated output file")
+    filename: str = Field(..., description="Output filename")
+    fields_filled: int = Field(..., description="Number of successfully filled fields")
+    fields_failed: int = Field(
+        ..., description="Number of fields that could not be filled"
+    )
+    field_errors: list[TemplateFillError] = Field(
+        default_factory=list, description="Per-field error details"
+    )
+    download_url: str = Field(
+        ..., description="Relative URL to download the output file"
+    )
+    status: str = Field(
+        default="completed",
+        description="'completed' or 'completed_with_errors'",
+    )

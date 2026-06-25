@@ -132,10 +132,7 @@ class GroqClient(LLMProvider):
 
         data = response.json()
         raw_text = (
-            data.get("choices", [{}])[0]
-            .get("message", {})
-            .get("content", "")
-            .strip()
+            data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
         )
 
         if not raw_text:
@@ -174,7 +171,9 @@ class GroqClient(LLMProvider):
         }
         if enable_thinking:
             payload["reasoning_effort"] = "default"
-            logger.info("Thinking mode ACTIVE (reasoning_effort=default) — expect higher token usage.")
+            logger.info(
+                "Thinking mode ACTIVE (reasoning_effort=default) — expect higher token usage."
+            )
 
         logger.info(
             "Streaming from Groq [%s] prompt_len=%d",
@@ -207,9 +206,7 @@ class GroqClient(LLMProvider):
                         continue
 
                     token = (
-                        data.get("choices", [{}])[0]
-                        .get("delta", {})
-                        .get("content", "")
+                        data.get("choices", [{}])[0].get("delta", {}).get("content", "")
                     )
                     if not token:
                         continue
@@ -318,10 +315,19 @@ class GroqClient(LLMProvider):
 
         if status == 401:
             logger.error("Groq: Invalid API key (401). Body: %s", error_body)
-            raise RuntimeError("LLM authentication failed. Check GROQ_API_KEY.") from exc
+            raise RuntimeError(
+                "LLM authentication failed. Check GROQ_API_KEY."
+            ) from exc
         elif status == 429:
             logger.error("Groq: Rate limit reached (429). Body: %s", error_body)
-            raise RuntimeError("LLM rate limit reached. Try again shortly.") from exc
+            msg = "LLM rate limit reached. Try again shortly."
+            try:
+                data = json.loads(error_body)
+                if "error" in data and "message" in data["error"]:
+                    msg = f"LLM rate limit reached: {data['error']['message']}"
+            except Exception:
+                pass
+            raise RuntimeError(msg) from exc
         else:
             logger.error("Groq HTTP %d Error: %s", status, error_body)
             raise RuntimeError(f"LLM service error (HTTP {status})") from exc

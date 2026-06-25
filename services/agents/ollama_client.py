@@ -65,6 +65,7 @@ class OllamaClient(LLMProvider):
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.1,
+        enable_thinking: bool = False,
     ) -> str:
         """
         Send a prompt to Ollama and return the generated text.
@@ -118,9 +119,7 @@ class OllamaClient(LLMProvider):
             ) from exc
         except httpx.HTTPStatusError as exc:
             logger.error("Ollama returned HTTP %d: %s", exc.response.status_code, exc)
-            raise RuntimeError(
-                "LLM service returned an error."
-            ) from exc
+            raise RuntimeError("LLM service returned an error.") from exc
 
         data = response.json()
         generated_text = data.get("response", "").strip()
@@ -137,6 +136,7 @@ class OllamaClient(LLMProvider):
         prompt: str,
         system_prompt: Optional[str] = None,
         temperature: float = 0.1,
+        enable_thinking: bool = False,
     ) -> AsyncGenerator[str, None]:
         """
         Stream tokens from Ollama's /api/generate one-by-one.
@@ -203,14 +203,10 @@ class OllamaClient(LLMProvider):
             ) from exc
         except httpx.TimeoutException as exc:
             logger.error("Ollama stream timed out after %ds", self._timeout)
-            raise RuntimeError(
-                "LLM request timed out."
-            ) from exc
+            raise RuntimeError("LLM request timed out.") from exc
         except httpx.HTTPStatusError as exc:
             logger.error("Ollama returned HTTP %d", exc.response.status_code)
-            raise RuntimeError(
-                "LLM service returned an error."
-            ) from exc
+            raise RuntimeError("LLM service returned an error.") from exc
 
         if token_count == 0:
             logger.warning("Ollama streaming returned zero tokens.")
