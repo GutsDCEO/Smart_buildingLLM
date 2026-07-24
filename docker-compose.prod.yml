@@ -1,0 +1,101 @@
+# ============================================================
+# Smart Building AI Assistant — Production Compose Override
+# ============================================================
+# Usage on Production Server (Mac Mini):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# ============================================================
+
+services:
+
+  # ── Qdrant Vector DB ──────────────────────────────────────
+  qdrant:
+    restart: always
+    ports: [] # Unbind public host ports for network isolation
+    deploy:
+      resources:
+        limits:
+          memory: 3G
+
+  # ── PostgreSQL Metadata DB ────────────────────────────────
+  postgres:
+    restart: always
+    ports: [] # Unbind public host ports for network isolation
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ── Ingestion Service (Docling / Tesseract) ───────────────
+  ingestion:
+    restart: always
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # ── Embedding Service (Sentence-Transformers) ─────────────
+  embedding:
+    restart: always
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # ── Agents Service (FastAPI Backend) ──────────────────────
+  agents:
+    restart: always
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+
+  # ── n8n Automation Engine ─────────────────────────────────
+  n8n:
+    restart: always
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ── Next.js Frontend UI (Production Build) ───────────────
+  chat-ui:
+    build:
+      context: ./services/chat-ui
+      dockerfile: Dockerfile
+    container_name: sb_chat_ui
+    restart: always
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_BASE_URL=http://smart-building.local/api
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+    networks:
+      - sb_network
+
+  # ── Caddy Reverse Proxy (LAN Access & Headers) ────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: sb_caddy
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - sb_network
+    depends_on:
+      - chat-ui
+      - agents
+      - n8n
+
+volumes:
+  caddy_data:
+  caddy_config:

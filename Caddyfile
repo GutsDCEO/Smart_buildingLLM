@@ -1,0 +1,40 @@
+# ============================================================
+# Smart Building AI — Production Reverse Proxy (Caddy)
+# ============================================================
+# Serves:
+#   - Next.js Frontend:  http://smart-building.local/
+#   - Agents API:        http://smart-building.local/api/
+#   - n8n Workflows:     http://smart-building.local/n8n/
+# ============================================================
+
+smart-building.local, localhost, :80 {
+    # ── Security Headers (OWASP Security Standard) ─────────────
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "SAMEORIGIN"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+
+    # ── n8n Workflow Automation Engine ────────────────────────
+    handle_path /n8n/* {
+        proxy_pass http://n8n:5678
+    }
+
+    # ── Agents FastAPI Backend API ─────────────────────────────
+    handle /api/* {
+        uri strip_prefix /api
+        proxy_pass http://agents:8000
+    }
+
+    # ── Next.js Frontend UI (Default Route) ────────────────────
+    handle {
+        proxy_pass http://chat-ui:3000
+    }
+
+    # Logging
+    log {
+        output stdout
+        format json
+    }
+}
