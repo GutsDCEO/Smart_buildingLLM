@@ -1,71 +1,83 @@
 """
 conftest.py — Shared pytest fixtures for the Smart Building AI test suite.
 
-Purpose:
-  - Mocks all I/O dependencies (PostgreSQL, Qdrant, LLM client) so unit
-    tests never require a running service.
-  - Overrides the FastAPI lifespan so TestClient doesn't try to connect
-    to real infrastructure during collection or test execution.
-  - Provides a UserResponse fixture for auth-protected endpoint tests.
+Key insight: TestClient(app) runs the FastAPI lifespan in a separate thread,
+so unittest.mock.patch (which is NOT thread-safe) cannot reliably mock calls
+that happen inside the lifespan from the test thread.
+
+Solution: Patch at import time using monkeypatch-style permanent patches that
+survive thread boundaries, and wrap TemplateService to be CI-safe.
 
 FIRST Principles:
-  Fast        — No real network calls; all replaced with AsyncMock / MagicMock.
-  Independent — Each test starts with fresh overrides via function-scope fixtures.
+  Fast        — No real network calls; all mocked before any test runs.
+  Independent — Each test starts with fresh dependency_overrides.
   Repeatable  — No external state; always produces the same result.
   Self-Validating — Fixtures fail loudly if patched targets are renamed.
   Timely      — Centralised here so every test file stays focused on logic.
 """
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+import asyncio
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from fastapi.testclient import TestClient
 
 
-# ─── Stub lifespan — replaces the real one so no DB / Qdrant / LLM needed ───
+# ─── Patch infrastructure BEFORE any test module is imported ─────────────────
+# These patches must happen at import time so they survive TestClient threads.
 
-@asynccontextmanager
-async def _stub_lifespan(app):
-    """No-op lifespan: skips all real infrastructure setup."""
-    import main
-    # Populate module-level singletons with safe mocks so endpoints work
-    main.llm_client = MagicMock()
-    main.guardrail_agent = MagicMock()
-    main.router_agent = MagicMock()
-    main.qa_agent = MagicMock()
-    main.template_service = MagicMock()
-    yield
+def _noop_connect_db():
+    """Async no-op: replaces real connect_db."""
+    future = asyncio.get_event_loop().create_future()
+    future.set_result(None)
+    return future
 
 
-@pytest.fixture(autouse=True, scope="session")
-def patch_lifespan():
-    """
-    Session-scoped: replace the app lifespan once for the whole test run.
-    Prevents TestClient from calling connect_db / qdrant / mkdir at startup.
-    """
-    import main
-    original = main.app.router.lifespan_context
-    main.app.router.lifespan_context = _stub_lifespan
-    yield
-    main.app.router.lifespan_context = original
+# Patch database at module level so TestClient thread sees the mock
+import database as _db_module
+_original_connect = _db_module.connect_db
+_original_disconnect = _db_module.disconnect_db
+_db_module.connect_db = AsyncMock(return_value=None)
+_db_module.disconnect_db = AsyncMock(return_value=None)
 
 
-# ─── Auth override — provides a real UserResponse so Depends() works ─────────
+# Patch TemplateService.__init__ to use /tmp instead of /data
+import template_service as _ts_module
+_original_ts_init = _ts_module.TemplateService.__init__
+
+def _safe_ts_init(self, qa_agent):
+    self._qa = qa_agent
+    from template_service import PlaceholderExtractor
+    self._extractor = PlaceholderExtractor()
+    self._output_dir = Path("/tmp/sb_test_outputs")
+    self._output_dir.mkdir(parents=True, exist_ok=True)
+
+_ts_module.TemplateService.__init__ = _safe_ts_init
+
+
+# Patch reranker.load_model to be a no-op (heavy model not needed in CI)
+try:
+    import reranker as _reranker_module
+    _reranker_module.load_model = MagicMock()
+except Exception:
+    pass
+
+
+# ─── Auth override ────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
 def override_auth():
     """
     Function-scoped: override get_current_user for every test so
-    auth-protected endpoints return 200 instead of 401.
+    auth-protected endpoints return the correct user instead of 401.
     """
-    from auth_middleware import get_current_user
+    from auth_middleware import get_current_user, require_admin
     from auth_models import UserResponse, UserRole
     import main
 
-    dummy_user = UserResponse(
+    admin_user = UserResponse(
         id=1,
         username="testuser",
         email="testuser@example.com",
@@ -74,6 +86,18 @@ def override_auth():
         created_at=datetime.now(timezone.utc),
         last_login=None,
     )
-    main.app.dependency_overrides[get_current_user] = lambda: dummy_user
+
+    viewer_user = UserResponse(
+        id=2,
+        username="viewer",
+        email="viewer@example.com",
+        role=UserRole.VIEWER,
+        is_active=True,
+        created_at=datetime.now(timezone.utc),
+        last_login=None,
+    )
+
+    main.app.dependency_overrides[get_current_user] = lambda: admin_user
     yield
     main.app.dependency_overrides.pop(get_current_user, None)
+    main.app.dependency_overrides.pop(require_admin, None)
