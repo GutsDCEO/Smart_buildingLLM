@@ -29,6 +29,10 @@ jobs:
           pip install pytest
 
       - name: Run Pytest
+        env:
+          PYTHONPATH: .:services/agents
+          GROQ_API_KEY: "gsk_dummy_key_for_ci_testing_12345"
+          JWT_SECRET: "ci_dummy_jwt_secret_key_for_testing_12345"
         run: |
           pytest tests/ -v --ignore=tests/integration
 
