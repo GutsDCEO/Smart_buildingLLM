@@ -28,11 +28,18 @@ jobs:
           if [ -f services/agents/requirements.txt ]; then pip install -r services/agents/requirements.txt; fi
           pip install pytest pytest-asyncio
 
+      - name: Create required data directories
+        run: |
+          sudo mkdir -p /data/outputs /data/ingest
+          sudo chmod 777 /data /data/outputs /data/ingest
+
       - name: Run Pytest
         env:
           PYTHONPATH: .:services/agents
           GROQ_API_KEY: "gsk_dummy_key_for_ci_testing_12345"
           JWT_SECRET: "ci_dummy_jwt_secret_key_for_testing_12345"
+          TEMPLATE_OUTPUT_DIR: "/data/outputs"
+          INGEST_FOLDER: "/data/ingest"
         run: |
           pytest tests/ -v --ignore=tests/integration
 
