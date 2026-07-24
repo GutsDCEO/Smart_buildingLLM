@@ -16,17 +16,6 @@ from httpx import AsyncClient, ASGITransport
 
 from main import app
 from models import GuardResponse, RouteResponse, IntentType
-from auth_middleware import get_current_user
-from auth_service import TokenPayload
-
-
-@pytest.fixture(autouse=True)
-def override_auth():
-    """Bypass auth for endpoint testing."""
-    dummy_user = TokenPayload(sub="1", username="testuser", role="user")
-    app.dependency_overrides[get_current_user] = lambda: dummy_user
-    yield
-    app.dependency_overrides.clear()
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
