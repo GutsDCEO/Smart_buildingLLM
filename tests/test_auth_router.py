@@ -275,18 +275,22 @@ class TestMeEndpoint:
 
     def test_me_authenticated_returns_user(self):
         """Should return current user profile when authenticated."""
-        admin = _admin_user()
-        with patch("auth_middleware.get_current_user", return_value=admin):
+        from auth_middleware import get_current_user
+        app.dependency_overrides[get_current_user] = lambda: _admin_user()
+        try:
             with TestClient(app) as client:
                 res = client.get(
                     "/auth/me",
                     headers={"Authorization": "Bearer mock-token"},
                 )
-        assert res.status_code == 200
-        assert res.json()["username"] == "admin"
+            assert res.status_code == 200
+            assert res.json()["username"] == "admin"
+        finally:
+            app.dependency_overrides.clear()
 
     def test_me_unauthenticated_returns_401(self):
         """Should return 401 when no token is provided."""
+        app.dependency_overrides.clear()
         with TestClient(app) as client:
             res = client.get("/auth/me")
         assert res.status_code == 401
@@ -301,28 +305,36 @@ class TestListUsersEndpoint:
 
     def test_admin_can_list_users(self):
         """Admin should receive full user list."""
+        from auth_middleware import get_current_user
         admin = _admin_user()
         users = [admin, _viewer_user()]
-        with patch("auth_middleware.get_current_user", return_value=admin):
+        app.dependency_overrides[get_current_user] = lambda: admin
+        try:
             with patch("auth_service.list_users", new_callable=AsyncMock, return_value=users):
                 with TestClient(app) as client:
                     res = client.get(
                         "/auth/users",
                         headers={"Authorization": "Bearer admin-token"},
                     )
-        assert res.status_code == 200
-        assert len(res.json()) == 2
+            assert res.status_code == 200
+            assert len(res.json()) == 2
+        finally:
+            app.dependency_overrides.clear()
 
     def test_viewer_cannot_list_users(self):
         """Viewer should receive 403 Forbidden (OWASP A01)."""
+        from auth_middleware import get_current_user
         viewer = _viewer_user()
-        with patch("auth_middleware.get_current_user", return_value=viewer):
+        app.dependency_overrides[get_current_user] = lambda: viewer
+        try:
             with TestClient(app) as client:
                 res = client.get(
                     "/auth/users",
                     headers={"Authorization": "Bearer viewer-token"},
                 )
-        assert res.status_code == 403
+            assert res.status_code == 403
+        finally:
+            app.dependency_overrides.clear()
 
 
 # ══════════════════════════════════════════════════════════════
@@ -334,21 +346,26 @@ class TestLogoutEndpoint:
 
     def test_logout_revokes_tokens(self):
         """Should return success and token count on logout."""
+        from auth_middleware import get_current_user
         admin = _admin_user()
-        with patch("auth_middleware.get_current_user", return_value=admin):
+        app.dependency_overrides[get_current_user] = lambda: admin
+        try:
             with patch("auth_service.revoke_all_tokens", new_callable=AsyncMock, return_value=3):
                 with TestClient(app) as client:
                     res = client.post(
                         "/auth/logout",
                         headers={"Authorization": "Bearer mock-token"},
                     )
-        assert res.status_code == 200
-        body = res.json()
-        assert body["status"] == "logged_out"
-        assert body["tokens_revoked"] == 3
+            assert res.status_code == 200
+            body = res.json()
+            assert body["status"] == "logged_out"
+            assert body["tokens_revoked"] == 3
+        finally:
+            app.dependency_overrides.clear()
 
     def test_logout_unauthenticated_returns_401(self):
         """Should reject logout without a token."""
+        app.dependency_overrides.clear()
         with TestClient(app) as client:
             res = client.post("/auth/logout")
         assert res.status_code == 401
@@ -363,49 +380,64 @@ class TestToggleUserEndpoint:
 
     def test_admin_can_disable_other_user(self):
         """Admin should be able to disable another user."""
+        from auth_middleware import get_current_user
         admin = _admin_user()
-        with patch("auth_middleware.get_current_user", return_value=admin):
+        app.dependency_overrides[get_current_user] = lambda: admin
+        try:
             with patch("auth_service.toggle_user_active", new_callable=AsyncMock, return_value=True):
                 with TestClient(app) as client:
                     res = client.patch(
                         "/auth/users/2/toggle?is_active=false",
                         headers={"Authorization": "Bearer admin-token"},
                     )
-        assert res.status_code == 200
-        assert res.json()["status"] == "disabled"
+            assert res.status_code == 200
+            assert res.json()["status"] == "disabled"
+        finally:
+            app.dependency_overrides.clear()
 
     def test_admin_cannot_disable_own_account(self):
         """Admin disabling themselves should return 400 (OWASP A01)."""
+        from auth_middleware import get_current_user
         admin = _admin_user()  # id=1
-        with patch("auth_middleware.get_current_user", return_value=admin):
+        app.dependency_overrides[get_current_user] = lambda: admin
+        try:
             with TestClient(app) as client:
-                # Target user_id=1 = same as admin.id
                 res = client.patch(
                     "/auth/users/1/toggle?is_active=false",
                     headers={"Authorization": "Bearer admin-token"},
                 )
-        assert res.status_code == 400
-        assert "own" in res.json()["detail"].lower()
+            assert res.status_code == 400
+            assert "own" in res.json()["detail"].lower()
+        finally:
+            app.dependency_overrides.clear()
 
     def test_toggle_nonexistent_user_returns_404(self):
         """Should return 404 if user_id does not exist."""
+        from auth_middleware import get_current_user
         admin = _admin_user()
-        with patch("auth_middleware.get_current_user", return_value=admin):
+        app.dependency_overrides[get_current_user] = lambda: admin
+        try:
             with patch("auth_service.toggle_user_active", new_callable=AsyncMock, return_value=False):
                 with TestClient(app) as client:
                     res = client.patch(
                         "/auth/users/999/toggle?is_active=true",
                         headers={"Authorization": "Bearer admin-token"},
                     )
-        assert res.status_code == 404
+            assert res.status_code == 404
+        finally:
+            app.dependency_overrides.clear()
 
     def test_viewer_cannot_toggle_users(self):
         """Viewer should receive 403 when attempting to toggle (OWASP A01)."""
+        from auth_middleware import get_current_user
         viewer = _viewer_user()
-        with patch("auth_middleware.get_current_user", return_value=viewer):
+        app.dependency_overrides[get_current_user] = lambda: viewer
+        try:
             with TestClient(app) as client:
                 res = client.patch(
                     "/auth/users/3/toggle?is_active=false",
                     headers={"Authorization": "Bearer viewer-token"},
                 )
-        assert res.status_code == 403
+            assert res.status_code == 403
+        finally:
+            app.dependency_overrides.clear()
