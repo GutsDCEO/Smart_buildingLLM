@@ -1,0 +1,58 @@
+name: Smart Building AI - Continuous Integration
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-backend:
+    name: Run Python Tests (Backend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: "services/agents/requirements.txt"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f services/agents/requirements.txt ]; then pip install -r services/agents/requirements.txt; fi
+          pip install pytest
+
+      - name: Run Pytest
+        run: |
+          pytest tests/ -v --ignore=tests/integration
+
+  test-frontend:
+    name: Run Typecheck (Frontend)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: "services/chat-ui/package-lock.json"
+
+      - name: Install dependencies
+        run: |
+          cd services/chat-ui
+          npm ci
+
+      - name: Run TypeScript Type Check
+        run: |
+          cd services/chat-ui
+          npx tsc --noEmit
