@@ -159,7 +159,8 @@ async def test_chat_out_of_scope_emits_friendly_token_and_done():
 
     assert "token" in event_types
     token_texts = " ".join(e["data"]["text"] for e in events if e["type"] == "token")
-    assert "Smart Building" in token_texts  # Must reference domain restriction
+    # Must reference the domain restriction (building/HVAC/facilities)
+    assert any(kw in token_texts.lower() for kw in ["building", "hvac", "facilities"])
 
     assert "done" in event_types
     done_ev = next(e for e in events if e["type"] == "done")

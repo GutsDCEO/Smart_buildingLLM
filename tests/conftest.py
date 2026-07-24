@@ -68,11 +68,19 @@ except Exception:
 # ─── Auth override ────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
-def override_auth():
+def override_auth(request):
     """
     Function-scoped: override get_current_user for every test so
     auth-protected endpoints return the correct user instead of 401.
+
+    Tests that manage their own auth (e.g., test_auth_router.py) can opt out
+    by adding:  pytestmark = pytest.mark.no_auth_override
     """
+    # Allow specific test modules to skip this override
+    if request.node.get_closest_marker("no_auth_override"):
+        yield
+        return
+
     from auth_middleware import get_current_user, require_admin
     from auth_models import UserResponse, UserRole
     import main
@@ -87,17 +95,8 @@ def override_auth():
         last_login=None,
     )
 
-    viewer_user = UserResponse(
-        id=2,
-        username="viewer",
-        email="viewer@example.com",
-        role=UserRole.VIEWER,
-        is_active=True,
-        created_at=datetime.now(timezone.utc),
-        last_login=None,
-    )
-
     main.app.dependency_overrides[get_current_user] = lambda: admin_user
     yield
     main.app.dependency_overrides.pop(get_current_user, None)
     main.app.dependency_overrides.pop(require_admin, None)
+

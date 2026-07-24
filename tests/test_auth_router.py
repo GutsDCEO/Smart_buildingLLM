@@ -24,6 +24,9 @@ from fastapi.testclient import TestClient
 # Import the FastAPI app so TestClient can call routes end-to-end
 from main import app
 
+# Opt out of global auth override — these tests manage their own auth state
+pytestmark = pytest.mark.no_auth_override
+
 # ── Shared test fixtures ──────────────────────────────────────────
 
 def _admin_user():
