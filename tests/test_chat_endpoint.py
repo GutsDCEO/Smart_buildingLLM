@@ -16,6 +16,17 @@ from httpx import AsyncClient, ASGITransport
 
 from main import app
 from models import GuardResponse, RouteResponse, IntentType
+from auth_middleware import get_current_user
+from auth_service import TokenPayload
+
+
+@pytest.fixture(autouse=True)
+def override_auth():
+    """Bypass auth for endpoint testing."""
+    dummy_user = TokenPayload(sub="1", username="testuser", role="user")
+    app.dependency_overrides[get_current_user] = lambda: dummy_user
+    yield
+    app.dependency_overrides.clear()
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -73,7 +84,7 @@ async def test_chat_happy_path_emits_all_event_types():
         patch("main.qdrant_search._client", new=MagicMock()),  # truthy → is_connected=True
         patch("main.qdrant_search.search", return_value=SAMPLE_SEARCH_RESULTS),
         patch("main.qa_agent._build_context_prompt", return_value="Context..."),
-        patch("main.ollama_client.generate_stream", return_value=_token_generator("The ", "HVAC ", "schedule.")),
+        patch("main.llm_client.generate_stream", return_value=_token_generator("The ", "HVAC ", "schedule.")),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/chat", json={"question": "What is HVAC?"})
@@ -103,7 +114,7 @@ async def test_chat_tokens_accumulate_correctly():
         patch("main.qdrant_search._client", new=MagicMock()),  # truthy → is_connected=True
         patch("main.qdrant_search.search", return_value=SAMPLE_SEARCH_RESULTS),
         patch("main.qa_agent._build_context_prompt", return_value="Context..."),
-        patch("main.ollama_client.generate_stream", return_value=_token_generator("Alpha", " Beta", " Gamma")),
+        patch("main.llm_client.generate_stream", return_value=_token_generator("Alpha", " Beta", " Gamma")),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/chat", json={"question": "HVAC?"})
@@ -227,7 +238,7 @@ async def test_chat_ollama_error_emits_error_event():
         patch("main.qdrant_search._client", new=MagicMock()),  # truthy → is_connected=True
         patch("main.qdrant_search.search", return_value=SAMPLE_SEARCH_RESULTS),
         patch("main.qa_agent._build_context_prompt", return_value="Context..."),
-        patch("main.ollama_client.generate_stream", side_effect=RuntimeError("LLM service is not reachable.")),
+        patch("main.llm_client.generate_stream", side_effect=RuntimeError("LLM service is not reachable.")),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             response = await client.post("/chat", json={"question": "HVAC?"})

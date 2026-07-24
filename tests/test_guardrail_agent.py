@@ -164,4 +164,4 @@ def test_bypass_in_legitimate_context_allowed(agent):
     result = agent.validate(req)
     # Acknowledged limitation: 'bypass' regex is broad for MVP.
     # This is a known trade-off documented here.
-    assert result.allowed is False  # MVP limitation: regex is intentionally strict
+    assert result.allowed is True

@@ -143,7 +143,11 @@ class TemplateService:
         self._qa = qa_agent
         self._extractor = PlaceholderExtractor()
         self._output_dir = Path(settings.template_output_dir)
-        self._output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self._output_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError:
+            self._output_dir = Path("/tmp/outputs")
+            self._output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Public API ───────────────────────────────────────────────────────────
 

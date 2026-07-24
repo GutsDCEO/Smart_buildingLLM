@@ -10,7 +10,7 @@ Follows FIRST principles:
 """
 import json
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from router_agent import RouterAgent
 from models import IntentType, RouteRequest
@@ -19,7 +19,8 @@ from models import IntentType, RouteRequest
 @pytest.fixture
 def agent() -> RouterAgent:
     """Provide a fresh RouterAgent for every test."""
-    return RouterAgent()
+    mock_llm = MagicMock()
+    return RouterAgent(llm_client=mock_llm)
 
 
 def _mock_ollama(raw_response: str):
