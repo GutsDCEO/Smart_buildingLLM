@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useId, useCallback } from "react";
+import { useTheme } from "next-themes";
 
 // ── HVAC class definitions injected into every diagram ──────────
 const HVAC_CLASS_DEFS = `
@@ -45,6 +46,9 @@ export default function MermaidDiagram({ code }: MermaidDiagramProps) {
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
+  // Consume the active theme so diagrams re-render when the user toggles
+  const { resolvedTheme } = useTheme();
+
   // ── Render mermaid to SVG ──────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
@@ -58,17 +62,28 @@ export default function MermaidDiagram({ code }: MermaidDiagramProps) {
           startOnLoad: false,
           securityLevel: "strict",
           suppressErrorRendering: true,
-          theme: "dark",
-          themeVariables: {
-            primaryColor: "#2d2d2d",
-            primaryTextColor: "#ececec",
-            primaryBorderColor: "rgba(255,255,255,0.15)",
-            lineColor: "#9f7aea",
-            secondaryColor: "#2a2a2a",
-            tertiaryColor: "#1a1a1a",
-            fontFamily: "Inter, system-ui, sans-serif",
-            fontSize: "14px",
-          },
+          theme: resolvedTheme === "dark" ? "dark" : "neutral",
+          themeVariables: resolvedTheme === "dark"
+            ? {
+                primaryColor: "#2d2d2d",
+                primaryTextColor: "#ececec",
+                primaryBorderColor: "rgba(255,255,255,0.15)",
+                lineColor: "#9f7aea",
+                secondaryColor: "#2a2a2a",
+                tertiaryColor: "#1a1a1a",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: "14px",
+              }
+            : {
+                primaryColor: "#ede9f6",
+                primaryTextColor: "#1a1a2e",
+                primaryBorderColor: "rgba(0,0,0,0.12)",
+                lineColor: "#7c3aed",
+                secondaryColor: "#f5f4f8",
+                tertiaryColor: "#f0eff4",
+                fontFamily: "Inter, system-ui, sans-serif",
+                fontSize: "14px",
+              },
           flowchart: {
             htmlLabels: true,
             curve: "basis",
@@ -105,7 +120,7 @@ export default function MermaidDiagram({ code }: MermaidDiagramProps) {
 
     render();
     return () => { cancelled = true; };
-  }, [code, diagramId]);
+  }, [code, diagramId, resolvedTheme]);
 
   // ── Close modal on Escape ──────────────────────────────────────
   useEffect(() => {

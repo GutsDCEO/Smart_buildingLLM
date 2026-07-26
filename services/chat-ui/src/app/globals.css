@@ -46,6 +46,100 @@
   --radius-xl:  18px;
 }
 
+/* ── Light Mode Overrides ─────────────────────────────────────── */
+/* Activated when next-themes removes the `dark` class from <html>  */
+html:not(.dark) {
+  /* Backgrounds — frosted off-white glassmorphism */
+  --bg-app:         #f0eff4;
+  --bg-sidebar:     rgba(255, 255, 255, 0.72);
+  --bg-chat:        #f5f4f8;
+  --bg-surface:     rgba(255, 255, 255, 0.82);
+  --bg-input:       rgba(255, 255, 255, 0.90);
+  --bg-hover:       rgba(0, 0, 0, 0.045);
+  --bg-active:      rgba(0, 0, 0, 0.08);
+
+  /* Borders */
+  --border:         rgba(0, 0, 0, 0.09);
+  --border-focus:   rgba(159, 122, 234, 0.70);
+
+  /* Accent — purple keeps contrast on both modes */
+  --accent-dim:     rgba(159, 122, 234, 0.12);
+  --accent-glow:    rgba(159, 122, 234, 0.20);
+
+  /* Text — rich dark on light */
+  --text-primary:   #1a1a2e;
+  --text-secondary: #4a5568;
+  --text-muted:     #718096;
+
+  /* User bubble */
+  --user-bg:        rgba(255, 255, 255, 0.88);
+  --user-border:    rgba(0, 0, 0, 0.10);
+
+  /* Thinking badge */
+  --thinking-bg:    rgba(159, 122, 234, 0.10);
+  --thinking-border: rgba(159, 122, 234, 0.28);
+  --thinking-text:  #6d28d9;
+}
+
+/* ── Light mode — sidebar glassmorphism ───────────────────────── */
+html:not(.dark) .sidebar {
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 1px 0 0 var(--border), 4px 0 16px rgba(0,0,0,0.06);
+}
+
+/* ── Light mode — profile popup shadows ─────────────────────────*/
+html:not(.dark) .profile-menu {
+  box-shadow: 0 8px 32px rgba(0,0,0,0.14), 0 2px 8px rgba(0,0,0,0.08);
+}
+
+/* ── Light mode — login card glassmorphism ───────────────────── */
+html:not(.dark) .login-card {
+  background: rgba(255, 255, 255, 0.82);
+  border-color: rgba(0, 0, 0, 0.09);
+  box-shadow:
+    0 24px 64px rgba(0, 0, 0, 0.12),
+    0 0 0 1px rgba(159, 122, 234, 0.12);
+}
+
+/* ── Light mode — login background orbs (boosted for contrast) ── */
+html:not(.dark) .login-bg-orb {
+  opacity: 0.38;
+  filter: blur(90px);
+}
+
+/* ── Light mode — mermaid modal backdrop ────────────────────────*/
+html:not(.dark) .mermaid-modal-backdrop {
+  background: rgba(0, 0, 0, 0.40);
+}
+
+/* ── Light mode — mermaid modal shadow ──────────────────────────*/
+html:not(.dark) .mermaid-modal {
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.18);
+}
+
+/* ── Light mode — mermaid card header strip ─────────────────────*/
+html:not(.dark) .mermaid-header {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+/* ── Light mode — template dropzone ─────────────────────────────*/
+html:not(.dark) .tmpl-dropzone {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+/* ── Light mode — template table hover & header ─────────────────*/
+html:not(.dark) .tmpl-table tr:hover td {
+  background: rgba(0, 0, 0, 0.025);
+}
+
+/* ── Light mode — hover borders that hardcode white-alpha ───────*/
+html:not(.dark) .new-chat-btn:hover    { border-color: rgba(0, 0, 0, 0.15); }
+html:not(.dark) .citation-card:hover   { border-color: rgba(0, 0, 0, 0.15); }
+html:not(.dark) .kb-doc-card:hover     { border-color: rgba(0, 0, 0, 0.14); }
+html:not(.dark) .think-toggle:hover    { border-color: rgba(0, 0, 0, 0.15); }
+html:not(.dark) .empty-chip:hover      { border-color: rgba(0, 0, 0, 0.15); }
+
 /* ── Reset ────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; overflow: hidden; }
@@ -1626,4 +1720,56 @@ button { font-family: inherit; cursor: pointer; }
   padding: 12px 16px;
   color: var(--accent-red);
   font-size: 13px;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   THEME TOGGLE — profile menu button
+══════════════════════════════════════════════════════════════ */
+
+/* Placeholder reserves layout space before client hydration */
+.theme-toggle-placeholder {
+  /* Same layout footprint as .profile-menu-item */
+  height: 36px;
+  width: 100%;
+}
+
+/* Full-width button styled like other profile-menu-item rows */
+.theme-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius-sm);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, transform 0.25s;
+  text-align: left;
+}
+.theme-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+.theme-toggle:hover .theme-toggle-icon {
+  transform: rotate(20deg) scale(1.15);
+  display: inline-block;
+}
+
+.theme-toggle-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+  width: 20px;
+  text-align: center;
+  display: inline-block;
+  transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.theme-toggle-label {
+  /* Label text same as other menu items */
+  flex: 1;
 }

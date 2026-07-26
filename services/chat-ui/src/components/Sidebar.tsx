@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { authFetch, apiLogout } from "@/lib/auth";
 import type { AuthUser } from "@/lib/auth";
 import { useRouter } from "next/navigation";
+import ThemeToggle from "@/components/ThemeToggle";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003";
 
@@ -216,6 +217,8 @@ export default function Sidebar({
                   {isAdmin ? "⚙️ Admin" : "👁 Viewer"}
                 </span>
               </div>
+              <div className="profile-menu-divider" />
+              <ThemeToggle />
               <div className="profile-menu-divider" />
               <button
                 className="profile-menu-item profile-menu-item--danger"
