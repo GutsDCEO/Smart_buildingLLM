@@ -236,7 +236,6 @@ button { font-family: inherit; cursor: pointer; }
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all 0.12s;
-  group: true;
   position: relative;
 }
 .conv-item:hover { background: var(--bg-hover); }
