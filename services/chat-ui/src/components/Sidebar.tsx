@@ -6,7 +6,7 @@ import type { AuthUser } from "@/lib/auth";
 import { useRouter } from "next/navigation";
 import ThemeToggle from "@/components/ThemeToggle";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8003";
+const API_BASE = "/api/backend";
 
 // ── Types ─────────────────────────────────────────────────────────
 
